@@ -48,6 +48,7 @@ button:hover { border-color: var(--muted); }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
 button.danger { border-color: color-mix(in srgb, var(--bad) 60%, var(--line)); color: var(--bad); }
+button.big { min-height: 52px; padding-inline: 22px; font-weight: 700; font-size: 17px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 input[type=text], input[type=password], select {
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-height: 42px; min-width: 0;
@@ -79,6 +80,9 @@ a { color: var(--accent); }
 .prompt-label { font: 600 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); }
 .prompt-main { font: 700 22px/1.2 var(--font-display); text-wrap: balance; }
 .prompt-sub { color: var(--muted); }
+.countdown { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.countdown i { display: block; height: 100%; background: var(--accent); transform-origin: left; animation: drain var(--dur, 2s) linear forwards; }
+@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .note { font-size: 14px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
 .note.good { color: var(--good); } .note.warn { color: var(--warn); } .note.bad { color: var(--bad); }
 .choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
@@ -92,13 +96,17 @@ a { color: var(--accent); }
 .clock.active .time { color: var(--accent); }
 
 .board-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 12px; align-items: start; }
-.mini { display: grid; grid-template-columns: repeat(8, 1fr); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; aspect-ratio: 1; max-width: 100%; }
-.mini div { display: grid; place-items: center; font-size: clamp(16px, 5vw, 30px); line-height: 1; position: relative; aspect-ratio: 1; }
+.mini { display: grid; grid-template-columns: repeat(8, 1fr); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; aspect-ratio: 1; max-width: 100%; user-select: none; -webkit-user-select: none; }
+.mini div { display: grid; place-items: center; font-size: clamp(16px, 5vw, 30px); line-height: 1; position: relative; aspect-ratio: 1; cursor: pointer; }
 .mini .l { background: var(--sq-light); } .mini .d { background: var(--sq-dark); }
 .mini .last { box-shadow: inset 0 0 0 100px rgba(228, 181, 90, .35); }
 .mini .pend { box-shadow: inset 0 0 0 3px var(--bad), inset 0 0 0 100px rgba(228, 106, 95, .25); }
+.mini .sel { box-shadow: inset 0 0 0 3px var(--accent-ink), inset 0 0 0 100px rgba(228, 181, 90, .55); }
+.mini .dest::after { content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgba(29, 23, 8, .45); }
+.mini .dest.cap::after { width: 86%; height: 86%; background: transparent; border: 3px solid rgba(29, 23, 8, .45); }
 .pc-w { color: #fbfaf5; text-shadow: 0 0 1px #000, 0 0 2px #000, 1px 1px 0 #2a2a2a; }
 .pc-b { color: #16130f; text-shadow: 0 0 1px #fff8; }
+.board-hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
 .moves { margin: 0; padding: 8px 10px; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.6 var(--font-mono); max-height: 260px; overflow-y: auto; font-variant-numeric: tabular-nums; }
 .moves li { display: grid; grid-template-columns: 26px 1fr 1fr; }
 .moves .n { color: var(--muted); }
@@ -145,7 +153,7 @@ details.card[open] > summary::after { content: '−'; }
     <div class="cam-tools">
       <button id="btnRotate" title="Turn the a1–h8 labels if they are on the wrong corners">Rotate labels</button>
       <button id="btnClear">Re-tap corners</button>
-      <label><input id="chkHeat" type="checkbox"> Show changes</label>
+      <label title="Dots show where the app sees white and black pieces. Red squares changed since the last move."><input id="chkHeat" type="checkbox"> Show what it sees</label>
       <label>Sensitivity <input id="rngThr" type="range" min="8" max="45" step="1"></label>
     </div>
     <div id="diag" class="diag">Camera off</div>
@@ -156,6 +164,7 @@ details.card[open] > summary::after { content: '−'; }
       <div id="pLabel" class="prompt-label">Step 1</div>
       <div id="pMain" class="prompt-main">Start the camera</div>
       <div id="pSub" class="prompt-sub"></div>
+      <div id="countdown" class="countdown" hidden><i></i></div>
       <div id="choices" class="choices" hidden></div>
     </div>
     <div id="note" class="note" hidden></div>
@@ -166,11 +175,15 @@ details.card[open] > summary::after { content: '−'; }
     </div>
 
     <div class="board-row">
-      <div id="mini" class="mini" aria-label="Digital board"></div>
+      <div>
+        <div id="mini" class="mini" aria-label="Digital board"></div>
+        <p id="boardHint" class="board-hint" hidden>Move not read? Tap the piece here, then the square it went to.</p>
+      </div>
       <ol id="moves" class="moves"><li class="empty">No moves yet</li></ol>
     </div>
 
     <div id="gameActions" class="actions" hidden>
+      <button id="btnUndo">Undo move</button>
       <button id="btnSync" title="Use when your real board matches the digital board exactly">My board matches</button>
       <button id="btnDraw">Offer draw</button>
       <button id="btnAbort">Abort</button>
@@ -178,7 +191,7 @@ details.card[open] > summary::after { content: '−'; }
       <button id="btnLeave">Leave game</button>
     </div>
     <form id="manualForm" class="manual" hidden>
-      <input id="manualMove" type="text" placeholder="Type a move, e.g. Nf3 or e2e4" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="manualMove" type="text" placeholder="Or type a move, e.g. Nf3" autocomplete="off" autocapitalize="off" spellcheck="false">
       <button type="submit">Play</button>
     </form>
 
@@ -236,11 +249,14 @@ details.card[open] > summary::after { content: '−'; }
     </details>
 
     <details class="card">
-      <summary>Camera &amp; voice</summary>
+      <summary>Camera, voice &amp; sending</summary>
       <div class="card-body">
         <div class="field">Camera <select id="camSel"><option value="">Back camera</option></select></div>
-        <label class="row"><input id="chkVoice" type="checkbox"> Read the opponent’s moves aloud</label>
-        <p>Tips: keep the whole board in view with a little margin. A camera directly overhead reads moves most reliably. If a move is not read, straighten the pieces, or type it in.</p>
+        <label class="row"><input id="chkVoice" type="checkbox"> Read moves aloud</label>
+        <div class="field">Pause before sending my move to Lichess (time to cancel a wrong read)
+          <select id="delay"><option value="0">Send at once</option><option value="2">2 seconds</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
+        </div>
+        <p>Tips: keep the whole board in view with a little margin. A camera directly overhead reads moves most reliably. Set pieces near the middle of their squares.</p>
       </div>
     </details>
   </section>
@@ -255,6 +271,7 @@ const $ = s => document.querySelector(s);
 const FILES = 'abcdefgh';
 const sqName = s => FILES[s % 8] + (Math.floor(s / 8) + 1);
 const sqIdx = n => (n.charCodeAt(0) - 97) + (parseInt(n[1], 10) - 1) * 8;
+const isLight = s => ((s % 8) + Math.floor(s / 8)) % 2 === 1;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const store = {
   get(k, d) { try { const v = localStorage.getItem('bc_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -269,12 +286,14 @@ const S = {
   token: store.get('token', ''), me: null,
   corners: store.get('corners', null), rot: store.get('rot', 0),
   thr: store.get('thr', 22), heat: store.get('heat', true), voice: store.get('voice', true), promo: store.get('promo', 'q'),
+  delay: store.get('delay', 2),
   mode: null,              // 'practice' | 'lichess'
   gameId: null, myColor: 'w', initialFen: null,
   serverMoves: [], server: null, status: null, winner: null, over: false,
   wtime: null, btime: null, clockAt: 0, names: { w: 'White', b: 'Black' },
-  phys: null, physUci: [], needRef: false, desync: false,
-  candidates: null, note: '', noteKind: '', announcedEnd: false,
+  phys: null, physUci: [], refStack: [], needRef: false, desync: false,
+  candidates: null, sel: null, outgoing: null, inFlight: false, lost: false,
+  note: '', noteKind: '', announcedEnd: false,
 };
 
 // ---------- camera ----------
@@ -357,13 +376,18 @@ function computeH() {
 }
 
 // ---------- vision ----------
-const G = 16, P = G * G, INSET = 0.2;
-let H = null, sampleSrc = null, cur = null, prev = null, ref = null, refPrev = null, diffs = null;
+// Each square is sampled on a G×G grid inside its middle. Per frame we keep the raw sample (cur),
+// a smoothed copy while the board is still (avg), and the board as it looked after the last move (ref).
+const G = 20, P = G * G, INSET = 0.15, NF = 5;
+let H = null, sampleSrc = null, cur = null, prev = null, avg = null, ref = null, diffs = null;
+let model = null, seen = null, seenTick = 0;
 let prevValid = false, motion = 0, noise = 3, stable = 0, changedCount = 0;
-const STABLE_N = 6;
+const STABLE_N = 7;
 
-function buildSampler() {
-  H = computeH(); sampleSrc = null; ref = null; prevValid = false; diffs = null;
+// keep = true re-aligns the grid mid-game without forgetting the learned board or the game.
+function buildSampler(keep) {
+  H = computeH(); sampleSrc = null; prevValid = false; diffs = null; seen = null;
+  if (!keep) { ref = null; model = null; }
   if (!H) return;
   const W = proc.width, Hh = proc.height;
   sampleSrc = new Int32Array(64 * P);
@@ -377,8 +401,137 @@ function buildSampler() {
       sampleSrc[k++] = (yi * W + xi) * 4;
     }
   }
-  cur = new Uint8Array(64 * P * 3); prev = new Uint8Array(64 * P * 3);
-  if (S.mode && !S.desync) S.needRef = true;
+  if (!cur) { cur = new Uint8Array(64 * P * 3); prev = new Uint8Array(64 * P * 3); avg = new Float32Array(64 * P * 3); }
+  if (!keep && S.mode && !S.desync) S.needRef = true;
+}
+
+// ---------- grid alignment ----------
+// The grid fits when every inner grid line sits on a light/dark border between squares.
+// For each point on a line we compare the average brightness of a small patch on either side,
+// `delta` squares away. A grid that is a little off still sees part of the contrast, so the
+// search always knows which way to move: wide patches first, then narrow ones for precision.
+// Rough taps are snapped to that fit, and the fit is re-checked while the board is still,
+// so a nudged phone or board is followed automatically.
+let baseline = 0, trackTick = 0, needSnap = false, lostStrikes = 0;
+function edgeMaps(img) {
+  const W = proc.width, Hh = proc.height;
+  const ii = new Float64Array((W + 1) * (Hh + 1)); // integral image of brightness
+  for (let y = 0; y < Hh; y++) {
+    let row = 0;
+    for (let x = 0; x < W; x++) {
+      const q = (y * W + x) * 4;
+      row += 0.299 * img[q] + 0.587 * img[q + 1] + 0.114 * img[q + 2];
+      ii[(y + 1) * (W + 1) + x + 1] = ii[y * (W + 1) + x + 1] + row;
+    }
+  }
+  return ii;
+}
+function boxMean(ii, x, y, R) {
+  const W = proc.width, Hh = proc.height;
+  const x0 = Math.round(x - R), x1 = Math.round(x + R) + 1, y0 = Math.round(y - R), y1 = Math.round(y + R) + 1;
+  if (x0 < 0 || y0 < 0 || x1 > W || y1 > Hh) return NaN;
+  const S1 = W + 1;
+  return (ii[y1 * S1 + x1] - ii[y0 * S1 + x1] - ii[y1 * S1 + x0] + ii[y0 * S1 + x0]) / ((x1 - x0) * (y1 - y0));
+}
+function gridScore(pts, ii, delta) {
+  const h = homography(BOARD_CORNERS, pts);
+  if (!h) return 0;
+  const R = Math.max(1, delta * squareSize(pts) * 0.7);
+  let sum = 0, n = 0;
+  // Signed: the checkerboard says which side of each line is the light square. Piece edges have
+  // random signs and cancel out; the board's own pattern adds up. abs() at the end allows either colouring.
+  const add = (a, b, sgn) => { n++; const d = boxMean(ii, a[0], a[1], R) - boxMean(ii, b[0], b[1], R); if (d === d) sum += sgn * Math.max(-90, Math.min(90, d)); };
+  for (let i = 1; i < 8; i++) for (let k = 0; k < 8; k++) {
+    const sv = (i - 1 + k) % 2 ? 1 : -1, sh = (k + i - 1) % 2 ? 1 : -1;
+    for (let t = 0.1; t < 0.95; t += 0.2) {
+      add(applyH(h, i - delta, k + t), applyH(h, i + delta, k + t), sv);
+      add(applyH(h, k + t, i - delta), applyH(h, k + t, i + delta), sh);
+    }
+  }
+  return Math.abs(sum) / n;
+}
+const CLIMB_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+function climb(start, lum, off, radius) {
+  let best = start.map(p => p.slice()), bs = gridScore(best, lum, off);
+  for (let step = Math.max(0.5, radius / 3); step >= 0.5; step /= 2) {
+    for (let it = 0, improved = true; improved && it < 30; it++) {
+      improved = false;
+      for (let c = -1; c < 4; c++) for (const [dx, dy] of CLIMB_DIRS) { // c = -1 shifts the whole grid
+        const cand = best.map((p, i) => (c < 0 || i === c) ? [p[0] + dx * step, p[1] + dy * step] : p);
+        if (cand.some((p, i) => Math.hypot(p[0] - start[i][0], p[1] - start[i][1]) > radius)) continue;
+        const s = gridScore(cand, lum, off);
+        if (s > bs + 1e-6) { best = cand; bs = s; improved = true; }
+      }
+    }
+  }
+  return { pts: best, score: bs };
+}
+const FINE_R = 0.06; // patch distance from the line, in squares, for the final fit
+function alignSearch(start, ii, radius, fineOnly) {
+  if (fineOnly) return climb(start, ii, FINE_R, radius);
+  const coarse = climb(start, ii, 0.25, radius);
+  const mid = climb(coarse.pts, ii, 0.12, Math.max(3, radius * 0.5));
+  return climb(mid.pts, ii, FINE_R, Math.max(2, radius * 0.25));
+}
+// Corner points in board order (a1, h1, h8, a8), in pixels.
+function boardPts() {
+  const px = S.corners.map(([x, y]) => [x * proc.width, y * proc.height]);
+  const screen = [px[3], px[2], px[1], px[0]];
+  return [0, 1, 2, 3].map(i => screen[(i + S.rot) % 4]);
+}
+function setFromBoardPts(pts) {
+  const screen = [0, 1, 2, 3].map(j => pts[(j - S.rot + 4) % 4]);
+  S.corners = [screen[3], screen[2], screen[1], screen[0]].map(([x, y]) => [x / proc.width, y / proc.height]);
+  store.set('corners', S.corners);
+}
+const squareSize = p => (Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]) + Math.hypot(p[2][0] - p[1][0], p[2][1] - p[1][1])
+  + Math.hypot(p[3][0] - p[2][0], p[3][1] - p[2][1]) + Math.hypot(p[0][0] - p[3][0], p[0][1] - p[3][1])) / 32;
+const maxDisp = (a, b) => Math.max(...a.map((p, i) => Math.hypot(p[0] - b[i][0], p[1] - b[i][1])));
+
+function snapCorners(radiusSquares, quiet) {
+  if (!S.corners || S.corners.length !== 4 || !stream || !proc.width) return;
+  const ii = edgeMaps(pctx.getImageData(0, 0, proc.width, proc.height).data);
+  const start = boardPts();
+  const r = alignSearch(start, ii, radiusSquares * squareSize(start));
+  setFromBoardPts(r.pts);
+  baseline = r.score; S.lost = false;
+  buildSampler();
+  if (r.score < 8) setNote('Could not find clear square edges. Check that the corners sit on the outer corners of the 64 squares, then drag any that are off.', 'warn');
+  else if (!quiet) setNote('Corners snapped to the squares.', 'good');
+}
+// Move the grid to new corners and keep playing: the current frame becomes the reference.
+function applyRealign(pts, img) {
+  setFromBoardPts(pts);
+  const hadRef = !!ref;
+  buildSampler(true);
+  if (!sampleSrc) return;
+  sample(img); avg.set(cur); prev.set(cur); prevValid = true;
+  if (hadRef && !S.needRef) ref = Float32Array.from(cur);
+  diffs = null; changedCount = 0;
+}
+function track(img) {
+  const ii = edgeMaps(img), now = boardPts(), s = gridScore(now, ii, FINE_R);
+  if (!baseline) { baseline = s; return; }
+  if (S.lost || s < 0.8 * baseline || changedCount > 14) {
+    const r = alignSearch(now, ii, 0.6 * squareSize(now)), moved = maxDisp(r.pts, now);
+    if (r.score >= 0.85 * baseline) {
+      lostStrikes = 0;
+      if (moved >= 1) applyRealign(r.pts, img);
+      baseline = 0.7 * baseline + 0.3 * r.score;
+      if (S.lost) { S.lost = false; setNote('Board found again. Carry on.', 'good'); render(); }
+      else if (moved >= 1) setNote('The board moved a little. The grid has been re-aligned.', 'good');
+    } else if (moved < 1.5 && !S.lost) {
+      baseline = s; // same place, the light changed
+    } else if (!S.lost && ++lostStrikes >= 2) {
+      S.lost = true;
+      setNote('', '');
+      speak('The board moved');
+      render();
+    }
+  } else if (trackTick % 27 === 0 && changedCount === 0) {
+    const r = alignSearch(now, ii, 3, true);
+    if (r.score > s * 1.02 && maxDisp(r.pts, now) >= 0.75) applyRealign(r.pts, img);
+  }
 }
 function sample(img) {
   for (let k = 0, o = 0; k < sampleSrc.length; k++, o += 3) { const q = sampleSrc[k]; cur[o] = img[q]; cur[o + 1] = img[q + 1]; cur[o + 2] = img[q + 2]; }
@@ -399,6 +552,80 @@ function squareDiffs(a, b) {
   return d;
 }
 
+// Per-square features: mean colour, brightness spread, edge strength. Pieces add edges and contrast.
+function features(buf) {
+  const f = new Float32Array(64 * NF), lum = new Float32Array(P);
+  for (let s = 0; s < 64; s++) {
+    const o = s * P * 3; let r = 0, g = 0, b = 0, l1 = 0, l2 = 0;
+    for (let k = 0; k < P; k++) {
+      const R = buf[o + k * 3], Gc = buf[o + k * 3 + 1], B = buf[o + k * 3 + 2];
+      r += R; g += Gc; b += B;
+      const L = 0.299 * R + 0.587 * Gc + 0.114 * B; lum[k] = L; l1 += L; l2 += L * L;
+    }
+    const m = l1 / P; let e = 0;
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const k = j * G + i;
+      if (i < G - 1) e += Math.abs(lum[k] - lum[k + 1]);
+      if (j < G - 1) e += Math.abs(lum[k] - lum[k + G]);
+    }
+    const q = s * NF;
+    f[q] = r / P; f[q + 1] = g / P; f[q + 2] = b / P;
+    f[q + 3] = Math.sqrt(Math.max(0, l2 / P - m * m)); f[q + 4] = e / (2 * G * (G - 1));
+  }
+  return f;
+}
+function statesOf(chess) {
+  const a = new Uint8Array(64);
+  for (let s = 0; s < 64; s++) { const p = chess.get(sqName(s)); a[s] = p ? (p.color === 'w' ? 1 : 2) : 0; }
+  return a;
+}
+
+// Square model: six classes (empty / white piece / black piece × light / dark square),
+// learned from a position we know is on the board, then nudged after every accepted move.
+const FLOOR = [30, 30, 30, 6, 2];
+function train(f, states, rate) {
+  const sum = [], ss = [], cnt = new Array(6).fill(0);
+  for (let k = 0; k < 6; k++) { sum.push(new Float64Array(NF)); ss.push(new Float64Array(NF)); }
+  const cls = s => states[s] * 2 + (isLight(s) ? 1 : 0);
+  for (let s = 0; s < 64; s++) { const k = cls(s); cnt[k]++; for (let j = 0; j < NF; j++) sum[k][j] += f[s * NF + j]; }
+  const mean = sum.map((v, k) => cnt[k] ? Array.from(v, x => x / cnt[k]) : null);
+  const pooled = new Float64Array(NF); let pc = 0;
+  for (let s = 0; s < 64; s++) {
+    const k = cls(s);
+    for (let j = 0; j < NF; j++) { const d = f[s * NF + j] - mean[k][j]; ss[k][j] += d * d; pooled[j] += d * d; }
+    pc++;
+  }
+  const pv = Array.from(pooled, (x, j) => Math.max(FLOOR[j], x / Math.max(1, pc - 6)));
+  const vr = ss.map((v, k) => mean[k] ? Array.from(v, (x, j) => Math.max(FLOOR[j], (x + 4 * pv[j]) / (Math.max(0, cnt[k] - 1) + 4))) : null);
+  if (!model || rate >= 1) { model = { mean, vr }; return; }
+  for (let k = 0; k < 6; k++) {
+    if (!mean[k]) continue;
+    if (!model.mean[k]) { model.mean[k] = mean[k]; model.vr[k] = vr[k]; continue; }
+    model.mean[k] = model.mean[k].map((x, j) => x * (1 - rate) + mean[k][j] * rate);
+    model.vr[k] = model.vr[k].map((x, j) => x * (1 - rate) + vr[k][j] * rate);
+  }
+}
+// Returns P(empty / white / black) per square, softened so no single square can dominate.
+const EPS = 0.03;
+function classProbs(f) {
+  const out = new Float32Array(64 * 3);
+  for (let s = 0; s < 64; s++) {
+    const lt = isLight(s) ? 1 : 0, L = [NaN, NaN, NaN];
+    for (let st = 0; st < 3; st++) {
+      let k = st * 2 + lt;
+      if (!model.mean[k]) k = st * 2 + (1 - lt);
+      if (!model.mean[k]) continue;
+      let acc = 0;
+      for (let j = 0; j < NF; j++) { const d = f[s * NF + j] - model.mean[k][j], v = model.vr[k][j]; acc += d * d / v + Math.log(v); }
+      L[st] = -0.25 * acc;
+    }
+    const known = L.filter(x => !isNaN(x)), mx = known.length ? Math.max(...known) : 0, mn = known.length ? Math.min(...known) : 0;
+    const e = L.map(x => Math.exp((isNaN(x) ? mn : x) - mx)), z = e[0] + e[1] + e[2];
+    for (let st = 0; st < 3; st++) out[s * 3 + st] = (1 - 3 * EPS) * e[st] / z + EPS;
+  }
+  return out;
+}
+
 function ensureSize() {
   if (!video.videoWidth) return false;
   const h = Math.round(PROC_W * video.videoHeight / video.videoWidth);
@@ -406,6 +633,7 @@ function ensureSize() {
     proc.width = view.width = PROC_W; proc.height = view.height = h;
     view.style.aspectRatio = PROC_W + ' / ' + h;
     buildSampler();
+    needSnap = !!H; // saved corners: fine-tune them on the first frames
   }
   return true;
 }
@@ -414,17 +642,28 @@ function tick() {
   if (!stream || video.readyState < 2 || !ensureSize()) return;
   pctx.drawImage(video, 0, 0, proc.width, proc.height);
   vctx.drawImage(proc, 0, 0);
+  if (needSnap && video.currentTime > 0.5) { needSnap = false; snapCorners(0.35, true); }
   if (sampleSrc) {
-    sample(pctx.getImageData(0, 0, proc.width, proc.height).data);
+    const img = pctx.getImageData(0, 0, proc.width, proc.height).data;
+    sample(img);
     motion = prevValid ? meanDiff(cur, prev) : 99;
     prev.set(cur); prevValid = true;
     const mt = Math.max(4, noise * 2.5);
-    if (motion < mt) { stable++; noise = noise * 0.95 + motion * 0.05; } else stable = 0;
-    diffs = ref ? squareDiffs(cur, ref) : null;
+    if (motion < mt) {
+      stable++; noise = noise * 0.95 + motion * 0.05;
+      if (stable === 1) avg.set(cur); else for (let i = 0; i < avg.length; i++) avg[i] += (cur[i] - avg[i]) * 0.3;
+    } else { stable = 0; avg.set(cur); }
+    diffs = ref ? squareDiffs(avg, ref) : null;
     changedCount = diffs ? diffs.filter(x => x > S.thr).length : 0;
-    if (S.needRef && stable >= STABLE_N) { ref = cur.slice(); S.needRef = false; diffs = null; render(); }
-    else if (ref && stable === STABLE_N) analyze();
-    $('#diag').textContent = `motion ${motion.toFixed(1)} · noise ${noise.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}`;
+    if (S.heat && model && ++seenTick % 3 === 0) seen = classProbs(features(avg));
+    if (stable >= STABLE_N && dragIdx < 0 && (++trackTick % 9 === 0 || (stable === STABLE_N && changedCount > 14))) track(img);
+    if (S.lost) { /* wait for the board to be found again */ }
+    else if (S.needRef && stable >= STABLE_N) {
+      ref = avg.slice(); S.needRef = false; diffs = null;
+      if (S.phys) train(features(avg), statesOf(S.phys), model ? 0.3 : 1);
+      render();
+    } else if (ref && stable === STABLE_N) analyze();
+    $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (model ? '' : ' · not trained yet');
   } else {
     $('#diag').textContent = 'Tap the 4 corners of the playing area';
   }
@@ -440,82 +679,156 @@ function moveSquares(m) {
   if (m.flags.includes('e')) sq.push(m.to[0] + m.from[1]);
   return sq.map(sqIdx);
 }
-const uciOf = m => m.from + m.to + (m.promotion || '');
-function legalCands() {
-  return S.phys.moves({ verbose: true })
-    .filter(m => !m.promotion || m.promotion === S.promo)
-    .map(m => ({ m, sq: moveSquares(m) }));
+function statesAfter(before, m) {
+  const a = before.slice(), col = m.color === 'w' ? 1 : 2, r = m.color === 'w' ? '1' : '8';
+  a[sqIdx(m.from)] = 0; a[sqIdx(m.to)] = col;
+  if (m.flags.includes('k')) { a[sqIdx('h' + r)] = 0; a[sqIdx('f' + r)] = col; }
+  if (m.flags.includes('q')) { a[sqIdx('a' + r)] = 0; a[sqIdx('d' + r)] = col; }
+  if (m.flags.includes('e')) a[sqIdx(m.to[0] + m.from[1])] = 0;
+  return a;
 }
+const uciOf = m => m.from + m.to + (m.promotion || '');
 function findMove(chess, uci) {
   return chess.moves({ verbose: true }).find(m => uciOf(m) === uci) || null;
 }
-function rank(cands, d, T) {
-  const changed = []; for (let s = 0; s < 64; s++) if (d[s] > T) changed.push(s);
-  return cands.map(c => {
-    const set = new Set(c.sq); let sum = 0, min = Infinity, extra = 0;
-    for (const s of c.sq) { sum += d[s]; min = Math.min(min, d[s]); }
-    for (const s of changed) if (!set.has(s)) extra += d[s];
-    return { m: c.m, min, score: sum - 0.6 * extra };
-  }).filter(c => c.min >= 0.5 * T && c.score > 0).sort((a, b) => b.score - a.score);
+// Log-likelihood that the board now shows `states`, with `touched` the squares that should have changed.
+function scoreStates(states, touched, probs, d, T) {
+  let sc = 0;
+  for (let s = 0; s < 64; s++) {
+    if (probs) sc += Math.log(probs[s * 3 + states[s]]);
+    const c = 1 / (1 + Math.exp(-(d[s] - T) / (0.3 * T)));
+    sc += touched.has(s) ? Math.log(0.04 + 0.92 * c) : Math.log(0.96 - 0.92 * c);
+  }
+  return sc;
 }
 function pendingMove() {
   if (S.mode !== 'lichess' || S.desync || !S.phys) return null;
   if (S.physUci.length >= S.serverMoves.length) return null;
   return findMove(S.phys, S.serverMoves[S.physUci.length]);
 }
+function canEnterMove() {
+  if (!S.phys || S.over || S.desync || S.outgoing || S.inFlight) return false;
+  if (S.mode === 'practice' || pendingMove()) return true;
+  return S.phys.turn() === S.myColor && S.status === 'started';
+}
 function analyze() {
   const d = diffs, T = S.thr;
   if (!d) return;
   const changed = d.filter(x => x > T).length;
-  if (changed === 0) { ref.set(cur); return; } // absorb slow lighting changes
-  if (!S.phys || S.over || S.desync) return;
-  if (changed > 12) return setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn');
+  if (changed === 0) { ref.set(avg); return; } // absorb slow lighting changes
+  if (!S.phys || S.over || S.desync || S.outgoing || S.inFlight || S.lost) return;
+  if (changed > 14) return setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn');
   const pend = pendingMove();
-  let cands;
-  if (pend) cands = [{ m: pend, sq: moveSquares(pend) }];
-  else if (S.mode === 'practice' || (S.phys.turn() === S.myColor && S.status === 'started')) cands = legalCands();
-  else return setNote('It is your opponent’s turn. Leave the board as it is.', 'warn');
-  const ranked = rank(cands, d, T);
-  if (!ranked.length) {
-    return setNote(pend ? `That does not look like ${pend.san}. Play the opponent’s move exactly as shown.`
-                        : 'Could not read that move. Straighten the pieces, or type the move below.', 'warn');
+  if (!canEnterMove()) return setNote('It is your opponent’s turn. Leave the board as it is.', 'warn');
+  const probs = model ? classProbs(features(avg)) : null;
+  const before = statesOf(S.phys);
+  const none = scoreStates(before, new Set(), probs, d, T);
+  const cands = S.phys.moves({ verbose: true })
+    .filter(m => !m.promotion || m.promotion === S.promo)
+    .map(m => ({ m, score: scoreStates(statesAfter(before, m), new Set(moveSquares(m)), probs, d, T) }))
+    .sort((a, b) => b.score - a.score);
+  if (pend) {
+    const pc = cands.find(c => uciOf(c.m) === uciOf(pend));
+    if (pc && pc.score >= cands[0].score - 1.5 && pc.score > none + 2) return commit(pend, 'camera');
+    return setNote(`That does not look like ${pend.san}. Play the opponent’s move exactly as shown, or tap it on the small board.`, 'warn');
   }
-  const [best, second] = ranked;
-  if (pend || !second || best.score - second.score >= 0.75 * T) commit(best.m, 'camera');
-  else { S.candidates = ranked.slice(0, 3).map(c => c.m); setNote('', ''); render(); }
+  const [best, second] = cands;
+  if (!best || best.score < none + 2) return setNote('Could not read a move. Tap it on the small board: the piece, then its square.', 'warn');
+  if (!second || best.score - second.score >= 3) commit(best.m, 'camera');
+  else { S.candidates = cands.filter(c => c.score > best.score - 4).slice(0, 3).map(c => c.m); setNote('', ''); render(); }
+}
+
+// ---------- committing, undo, sending ----------
+function applyPhys(mv, source) {
+  S.refStack.push(ref ? ref.slice() : null);
+  if (S.refStack.length > 30) S.refStack.shift();
+  const done = S.phys.move(mv);
+  S.physUci.push(uciOf(done));
+  if (source === 'camera' && ref) { ref.set(avg); if (model) train(features(avg), statesOf(S.phys), 0.3); }
+  else S.needRef = true;
+  return done;
+}
+function popPhys() {
+  S.phys.undo(); S.physUci.pop();
+  const r = S.refStack.pop();
+  if (r) { ref = r; S.needRef = false; } else S.needRef = true;
 }
 function commit(m, source) {
-  S.candidates = null;
+  S.candidates = null; S.sel = null;
   const u = uciOf(m), pend = pendingMove();
-  refPrev = ref ? ref.slice() : null;
+  const mv = { from: m.from, to: m.to, promotion: m.promotion };
   if (S.mode === 'lichess') {
     if (pend) {
       if (uciOf(pend) !== u) return setNote(`First play the opponent’s move ${pend.san} on your board.`, 'warn');
-      S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
+      applyPhys(mv, source);
       setNote('Board in sync. Your move.', 'good');
-    } else if (S.phys.turn() === S.myColor && S.status === 'started') {
-      S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
-      sendMove(u, m.san, source);
+    } else if (canEnterMove()) {
+      const done = applyPhys(mv, source);
+      queueSend(uciOf(done), done.san, source);
     } else return setNote('It is not your turn.', 'warn');
   } else {
-    S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
-    setNote('Read: ' + m.san, 'good');
-    speak(sayMove(m.san));
+    const done = applyPhys(mv, source);
+    setNote('Read: ' + done.san + '. Wrong? Tap “Undo move”.', 'good');
+    speak(sayMove(done.san));
   }
-  if (source === 'camera' && ref) ref.set(cur); else S.needRef = true;
   render();
 }
+function undo() {
+  S.candidates = null; S.sel = null;
+  if (S.outgoing) return cancelSend();
+  if (!S.phys || !S.physUci.length) return setNote('Nothing to undo.', '');
+  const last = S.phys.history({ verbose: true }).pop();
+  if (S.mode === 'lichess' && last.color === S.myColor) return requestTakeback();
+  popPhys();
+  setNote(`Took back ${last.san}. Put the piece back where it was, or tap the correct move on the small board.`, 'warn');
+  render();
+}
+function queueSend(u, san, source) {
+  if (!S.delay) return sendMove(u, san, source);
+  const o = { u, san, source };
+  o.timer = setTimeout(() => { if (S.outgoing === o) { S.outgoing = null; sendMove(u, san, source); } }, S.delay * 1000);
+  S.outgoing = o;
+  speak(sayMove(san) + '?');
+}
+function cancelSend() {
+  const o = S.outgoing; if (!o) return;
+  clearTimeout(o.timer); S.outgoing = null;
+  popPhys();
+  setNote(`${o.san} was not sent. Put the piece back, or tap the correct move on the small board.`, 'warn');
+  render();
+}
+function sendNow() {
+  const o = S.outgoing; if (!o) return;
+  clearTimeout(o.timer); S.outgoing = null;
+  sendMove(o.u, o.san, o.source);
+}
 async function sendMove(u, san, source) {
+  S.inFlight = true;
   setNote('Sending ' + san + '…', '');
+  render();
   try {
     await api(`/api/board/game/${S.gameId}/move/${u}`, { method: 'POST' });
     setNote('Played ' + san, 'good');
   } catch (e) {
-    if (S.physUci[S.physUci.length - 1] === u) { S.phys.undo(); S.physUci.pop(); }
-    if (source === 'camera' && refPrev) { ref = refPrev; S.needRef = false; }
+    if (S.physUci[S.physUci.length - 1] === u) popPhys();
     setNote(`Lichess did not accept ${san}. Put the piece back. (${e.message})`, 'bad');
-    render();
+  } finally { S.inFlight = false; render(); }
+}
+async function requestTakeback() {
+  try { await api(`/api/board/game/${S.gameId}/takeback/yes`, { method: 'POST' }); setNote('Takeback requested. Wait for your opponent to accept.', ''); }
+  catch (e) { setNote('Could not ask for a takeback. ' + e.message, 'bad'); }
+}
+
+// ---------- tap a move on the digital board ----------
+function onBoardTap(name) {
+  if (!canEnterMove()) return;
+  if (S.sel) {
+    const m = S.phys.moves({ square: S.sel, verbose: true }).find(x => x.to === name && (!x.promotion || x.promotion === S.promo));
+    if (m) { S.sel = null; return commit(m, 'manual'); }
   }
+  const p = S.phys.get(name);
+  S.sel = p && p.color === S.phys.turn() && S.sel !== name ? name : null;
+  render();
 }
 
 // ---------- speech ----------
@@ -662,13 +975,19 @@ async function seek() {
   catch (e) { if (e.name !== 'AbortError') setNote(e.message, 'bad'); else setNote('Search cancelled.', ''); }
   finally { if (seekAbort === ctl) seekAbort = null; render(); }
 }
+function resetGameState() {
+  if (S.outgoing) clearTimeout(S.outgoing.timer);
+  Object.assign(S, { serverMoves: [], server: null, over: false, status: 'started', winner: null, phys: null, physUci: [], refStack: [],
+    desync: false, candidates: null, sel: null, outgoing: null, inFlight: false, announcedEnd: false });
+  ref = null; model = null; seen = null;
+}
 function openGame(id) {
   if (S.gameId === id && S.mode === 'lichess' && !S.over && gameAbort) return;
   if (gameAbort) gameAbort.abort();
   if (seekAbort) { seekAbort.abort(); seekAbort = null; }
   const ctl = gameAbort = new AbortController();
-  Object.assign(S, { mode: 'lichess', gameId: id, serverMoves: [], server: null, over: false, status: 'started', winner: null,
-    phys: null, physUci: [], desync: false, candidates: null, announcedEnd: false });
+  resetGameState();
+  S.mode = 'lichess'; S.gameId = id;
   setNote('Joining game…', '');
   $('#cardGame').open = false;
   streamNdjson('/api/board/game/stream/' + id, d => onGameLine(d, id), ctl.signal)
@@ -715,9 +1034,16 @@ function onServerState(st, initial) {
   S.serverMoves = norm; S.server = c;
   S.wtime = st.wtime; S.btime = st.btime; S.clockAt = performance.now();
   S.status = st.status; S.winner = st.winner || null;
+  if (!initial && norm.length < prevLen && S.phys && !S.desync) {
+    // Takeback accepted on Lichess: roll the board back to match.
+    if (S.outgoing) { clearTimeout(S.outgoing.timer); S.outgoing = null; }
+    while (S.physUci.length > norm.length) popPhys();
+    setNote('Takeback accepted. Put the pieces back as shown on the small board.', 'warn');
+    speak('Takeback accepted');
+  }
   if (!S.desync && S.phys) {
     for (let i = 0; i < Math.min(S.physUci.length, norm.length); i++) {
-      if (S.physUci[i] !== norm[i]) { S.desync = true; setNote('The game changed on Lichess (for example a takeback). Set your board to match the digital board, then tap “My board matches”.', 'warn'); break; }
+      if (S.physUci[i] !== norm[i]) { S.desync = true; setNote('The game changed on Lichess. Set your board to match the digital board, then tap “My board matches”.', 'warn'); break; }
     }
   }
   if (!initial && norm.length > prevLen) {
@@ -742,21 +1068,21 @@ function resync() {
     S.phys = newChess(); S.physUci = [];
     for (const u of S.serverMoves) { const m = moveFromUci(S.phys, u); if (!m) break; S.physUci.push(uciOf(m)); }
   }
-  S.desync = false; S.candidates = null; S.needRef = true; ref = null;
+  S.desync = false; S.candidates = null; S.sel = null; S.refStack = []; S.needRef = true; ref = null; model = null;
   render();
 }
 function startPractice() {
   if (gameAbort) gameAbort.abort();
-  Object.assign(S, { mode: 'practice', gameId: null, myColor: 'w', initialFen: null, phys: new Chess(), physUci: [], serverMoves: [], server: null,
-    over: false, status: 'started', desync: false, candidates: null, needRef: true, names: { w: 'White', b: 'Black' } });
-  ref = null;
+  resetGameState();
+  Object.assign(S, { mode: 'practice', gameId: null, myColor: 'w', initialFen: null, phys: new Chess(), needRef: true, names: { w: 'White', b: 'Black' } });
   setNote('Set up the pieces in the starting position. Moves are read for both sides.', '');
   render();
 }
 function leaveGame() {
   if (gameAbort) gameAbort.abort(); gameAbort = null;
-  Object.assign(S, { mode: null, gameId: null, phys: null, physUci: [], serverMoves: [], server: null, over: false, desync: false, candidates: null });
-  ref = null; setNote('', ''); $('#cardGame').open = true; render();
+  resetGameState();
+  S.mode = null; S.gameId = null;
+  setNote('', ''); $('#cardGame').open = true; render();
 }
 
 // ---------- UI ----------
@@ -767,18 +1093,20 @@ function promptState() {
   if (!stream) return ['Step 1', 'Start the camera', 'Mount your phone above the board, looking down.'];
   if (!H) {
     const n = S.corners ? S.corners.length : 0;
-    return ['Step 2', `Tap the 4 corners of the board (${n}/4)`, 'Tap the outer corners of the 64 squares, not the wooden border. Drag a corner later to fine-tune it.'];
+    return ['Step 2', `Tap the 4 corners of the board (${n}/4)`, 'Tap near the outer corners of the 64 squares, not the wooden border. Roughly is fine: the grid snaps to the squares.'];
   }
+  if (S.lost) return ['Board moved', 'The grid no longer fits the board', 'Put the phone back if it was knocked, or tap “Re-tap corners” and tap the 4 corners roughly. Your game is kept.'];
   if (!S.mode) return ['Step 3', 'Check the labels, then pick a game', 'The a1 label must sit on the corner at White’s left. If not, tap “Rotate labels”. Then connect Lichess below, or try Practice mode.'];
   if (S.over) return ['Game over', resultText(), 'Start another game below.'];
   if (S.desync) return ['Set up your board', 'Make your board match the digital board', 'Then tap “My board matches”.'];
   if (S.mode === 'lichess' && !S.phys) return ['Lichess', 'Joining game…', ''];
   if (S.needRef || !ref) return ['Reading the board', 'Hold still…', 'Keep hands away from the board for a moment.'];
-  if (S.candidates) return ['Check', 'Which move did you play?', 'Tap the right one.'];
+  if (S.outgoing) return ['Your move', 'Sending ' + S.outgoing.san + '…', 'Wrong move? Tap Cancel.'];
+  if (S.candidates) return ['Check', 'Which move did you play?', 'Tap one, or tap the piece and its square on the small board.'];
   const pend = pendingMove();
   if (pend) return ['Opponent played ' + pend.san, `Move the ${PIECE_NAMES[pend.piece].toLowerCase()} ${pend.from} → ${pend.to}`, sayMove(pend.san)];
   if (S.mode === 'practice') return [S.phys.turn() === 'w' ? 'White to move' : 'Black to move', 'Make a move on the board', 'It is read when your hand leaves the board.'];
-  if (S.physUci.length > S.serverMoves.length) return ['Your move', 'Sending to Lichess…', ''];
+  if (S.inFlight) return ['Your move', 'Sending to Lichess…', ''];
   if (S.phys.turn() === S.myColor) return ['Your move', 'Make your move on the board', 'It is sent to Lichess when your hand leaves the board.'];
   return ['Waiting', 'Opponent is thinking…', 'You will hear their move.'];
 }
@@ -787,30 +1115,50 @@ const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 function render() {
   const [label, main, sub] = promptState();
   $('#pLabel').textContent = label; $('#pMain').textContent = main; $('#pSub').textContent = sub || '';
-  const ch = $('#choices');
-  ch.hidden = !S.candidates; ch.innerHTML = '';
-  (S.candidates || []).forEach(m => { const b = document.createElement('button'); b.textContent = m.san; b.onclick = () => commit(m, 'camera'); ch.appendChild(b); });
+
+  const ch = $('#choices'); ch.innerHTML = '';
+  const cd = $('#countdown');
+  if (S.outgoing) {
+    const cancel = document.createElement('button'); cancel.className = 'danger big'; cancel.textContent = 'Cancel'; cancel.onclick = cancelSend;
+    const now = document.createElement('button'); now.className = 'big'; now.textContent = 'Send now'; now.onclick = sendNow;
+    ch.append(cancel, now);
+    if (cd.hidden || cd.dataset.san !== S.outgoing.u) {
+      cd.hidden = false; cd.dataset.san = S.outgoing.u;
+      cd.style.setProperty('--dur', S.delay + 's');
+      cd.innerHTML = '<i></i>';
+    }
+  } else {
+    cd.hidden = true; cd.dataset.san = '';
+    (S.candidates || []).forEach(m => { const b = document.createElement('button'); b.textContent = m.san; b.onclick = () => commit(m, 'camera'); ch.appendChild(b); });
+  }
+  ch.hidden = !ch.children.length;
   renderNote();
 
-  const pos = S.mode === 'lichess' ? (S.server || S.phys) : S.phys;
+  const pos = S.phys || S.server;
   const flip = S.myColor === 'b';
-  const hist = pos ? pos.history({ verbose: true }) : [];
-  const last = hist[hist.length - 1];
+  const physHist = S.phys ? S.phys.history({ verbose: true }) : [];
+  const last = physHist[physHist.length - 1];
   const pend = pendingMove();
-  const hl = new Set(), pd = new Set();
+  const hl = new Set(), pd = new Set(), dest = new Set();
   if (pend) { pd.add(pend.from); pd.add(pend.to); } else if (last) { hl.add(last.from); hl.add(last.to); }
+  if (S.sel && S.phys) S.phys.moves({ square: S.sel, verbose: true }).forEach(m => dest.add(m.to));
   const board = pos ? pos.board() : new Chess().board();
   const mini = $('#mini'); mini.innerHTML = '';
   for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
     const r = flip ? 7 - row : row, c = flip ? 7 - col : col;
     const name = FILES[c] + (8 - r), p = board[r][c];
     const cell = document.createElement('div');
-    cell.className = ((r + c) % 2 ? 'd' : 'l') + (hl.has(name) ? ' last' : '') + (pd.has(name) ? ' pend' : '');
+    cell.className = ((r + c) % 2 ? 'd' : 'l') + (hl.has(name) ? ' last' : '') + (pd.has(name) ? ' pend' : '')
+      + (S.sel === name ? ' sel' : '') + (dest.has(name) ? ' dest' + (p ? ' cap' : '') : '');
     if (p) { cell.textContent = GLYPH[p.type] + '︎'; cell.classList.add(p.color === 'w' ? 'pc-w' : 'pc-b'); }
+    cell.onclick = () => onBoardTap(name);
     mini.appendChild(cell);
   }
+  $('#boardHint').hidden = !canEnterMove();
+
   const ol = $('#moves'); ol.innerHTML = '';
-  const sans = hist.map(m => m.san);
+  const histPos = S.mode === 'lichess' && S.server && S.server.history().length >= physHist.length ? S.server : S.phys;
+  const sans = histPos ? histPos.history() : [];
   if (!sans.length) ol.innerHTML = '<li class="empty">No moves yet</li>';
   for (let i = 0; i < sans.length; i += 2) {
     const li = document.createElement('li');
@@ -825,6 +1173,8 @@ function render() {
   $('#manualForm').hidden = !inGame || S.over;
   const live = S.mode === 'lichess' && !S.over;
   $('#btnDraw').hidden = $('#btnAbort').hidden = $('#btnResign').hidden = !live;
+  $('#btnUndo').hidden = S.over;
+  $('#btnUndo').textContent = S.mode === 'lichess' && last && last.color === S.myColor && !S.outgoing ? 'Ask takeback' : 'Undo move';
   $('#clocks').hidden = S.mode !== 'lichess';
   $('#btnAI').disabled = $('#btnSeek').disabled = !S.me;
   $('#btnSeek').textContent = seekAbort ? 'Cancel search' : 'Find a human opponent';
@@ -872,6 +1222,16 @@ function drawOverlay() {
       a = applyH(H, 0, i); b = applyH(H, 8, i); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
     }
     c.stroke();
+    if (S.heat && seen) {
+      for (let s = 0; s < 64; s++) {
+        const pw = seen[s * 3 + 1], pb = seen[s * 3 + 2];
+        if (pw < 0.5 && pb < 0.5) continue;
+        const [x, y] = applyH(H, s % 8 + 0.5, Math.floor(s / 8) + 0.5);
+        c.beginPath(); c.arc(x, y, 6, 0, Math.PI * 2);
+        c.fillStyle = pw > pb ? '#ffffff' : '#111111'; c.fill();
+        c.lineWidth = 2; c.strokeStyle = pw > pb ? '#111111' : '#ffffff'; c.stroke();
+      }
+    }
     c.font = '600 13px "IBM Plex Mono", monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
     c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.fillStyle = '#f4e3b8';
     for (let i = 0; i < 8; i++) {
@@ -879,10 +1239,10 @@ function drawOverlay() {
       p = applyH(H, 0.16, i + 0.5); c.strokeText(String(i + 1), p[0], p[1]); c.fillText(String(i + 1), p[0], p[1]);
     }
     const pend = pendingMove();
-    const arrows = pend ? [pend] : (S.candidates || []);
+    const arrows = pend ? [pend] : S.outgoing ? [{ from: S.outgoing.u.slice(0, 2), to: S.outgoing.u.slice(2, 4) }] : (S.candidates || []);
     arrows.forEach((m, k) => drawArrow(sqIdx(m.from), sqIdx(m.to), pend ? '#e46a5f' : ['#e4b55a', '#73c48f', '#8fb4e4'][k]));
   }
-  pts.forEach((p, i) => {
+  pts.forEach(p => {
     c.beginPath(); c.arc(p[0], p[1], 9, 0, Math.PI * 2);
     c.fillStyle = 'rgba(228,181,90,0.9)'; c.fill(); c.lineWidth = 2; c.strokeStyle = '#1d1708'; c.stroke();
   });
@@ -920,7 +1280,7 @@ view.addEventListener('pointerdown', e => {
     return;
   }
   S.corners = (S.corners || []).concat([p]);
-  if (S.corners.length === 4) { S.corners = orderCorners(S.corners); store.set('corners', S.corners); buildSampler(); }
+  if (S.corners.length === 4) { S.corners = orderCorners(S.corners); store.set('corners', S.corners); snapCorners(0.35); }
   render();
 });
 view.addEventListener('pointermove', e => {
@@ -928,7 +1288,7 @@ view.addEventListener('pointermove', e => {
   S.corners[dragIdx] = toNorm(e).map(v => Math.min(1, Math.max(0, v)));
   H = computeH();
 });
-function endDrag() { if (dragIdx < 0) return; dragIdx = -1; store.set('corners', S.corners); buildSampler(); render(); }
+function endDrag() { if (dragIdx < 0) return; dragIdx = -1; store.set('corners', S.corners); snapCorners(0.15, true); render(); }
 view.addEventListener('pointerup', endDrag);
 view.addEventListener('pointercancel', endDrag);
 
@@ -936,11 +1296,12 @@ view.addEventListener('pointercancel', endDrag);
 $('#btnCam').onclick = () => startCamera($('#camSel').value || null);
 $('#camSel').onchange = e => startCamera(e.target.value || null);
 $('#btnRotate').onclick = () => { S.rot = (S.rot + 1) % 4; store.set('rot', S.rot); buildSampler(); render(); };
-$('#btnClear').onclick = () => { S.corners = null; store.del('corners'); H = null; sampleSrc = null; ref = null; diffs = null; render(); };
-$('#chkHeat').checked = S.heat; $('#chkHeat').onchange = e => { S.heat = e.target.checked; store.set('heat', S.heat); };
+$('#btnClear').onclick = () => { S.corners = null; store.del('corners'); H = null; sampleSrc = null; ref = null; diffs = null; model = null; seen = null; baseline = 0; S.lost = false; render(); };
+$('#chkHeat').checked = S.heat; $('#chkHeat').onchange = e => { S.heat = e.target.checked; store.set('heat', S.heat); if (!S.heat) seen = null; };
 $('#rngThr').value = 53 - S.thr;
 $('#rngThr').oninput = e => { S.thr = 53 - Number(e.target.value); store.set('thr', S.thr); };
 $('#chkVoice').checked = S.voice; $('#chkVoice').onchange = e => { S.voice = e.target.checked; store.set('voice', S.voice); if (S.voice) speak('Voice on'); };
+$('#delay').value = String(S.delay); $('#delay').onchange = e => { S.delay = Number(e.target.value); store.set('delay', S.delay); };
 $('#promo').value = S.promo; $('#promo').onchange = e => { S.promo = e.target.value; store.set('promo', S.promo); };
 $('#btnConnect').onclick = connect;
 $('#token').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
@@ -948,6 +1309,7 @@ $('#btnLogout').onclick = logout;
 $('#btnAI').onclick = playAI;
 $('#btnSeek').onclick = seek;
 $('#btnPractice').onclick = startPractice;
+$('#btnUndo').onclick = undo;
 $('#btnSync').onclick = () => { resync(); setNote('Reading your board as it is now.', ''); };
 $('#btnLeave').onclick = leaveGame;
 $('#btnAbort').onclick = async () => { try { await api(`/api/board/game/${S.gameId}/abort`, { method: 'POST' }); } catch (e) { setNote(e.message, 'bad'); } };
@@ -962,7 +1324,7 @@ $('#btnResign').onclick = async () => {
 $('#manualForm').addEventListener('submit', e => {
   e.preventDefault();
   const txt = $('#manualMove').value.trim();
-  if (!txt || !S.phys) return;
+  if (!txt || !canEnterMove()) return;
   const probe = new Chess(S.phys.fen());
   const m = probe.move(txt, { sloppy: true });
   if (!m) return setNote(`“${txt}” is not a legal move here.`, 'warn');
