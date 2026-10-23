@@ -1,0 +1,977 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111612">
+<title>Board Cam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: camera view is the hero; a side panel holds the live prompt, clocks, mini board and setup. Stacks on phones. */
+:root {
+  --bg: #111612;
+  --panel: #192019;
+  --panel-2: #212a22;
+  --line: #2e3a30;
+  --fg: #e9ede6;
+  --muted: #97a497;
+  --accent: #e4b55a;
+  --accent-ink: #1d1708;
+  --good: #73c48f;
+  --warn: #e8a33d;
+  --bad: #e46a5f;
+  --sq-light: #d9d2bd;
+  --sq-dark: #7d9474;
+  --font-display: 'Chivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.45 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(10px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+}
+button, input, select { font: inherit; color: inherit; }
+button {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 9px 14px; cursor: pointer; min-height: 42px;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+button.danger { border-color: color-mix(in srgb, var(--bad) 60%, var(--line)); color: var(--bad); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input[type=text], input[type=password], select {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-height: 42px; min-width: 0;
+}
+a { color: var(--accent); }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 6px 12px; }
+.brand { font: 900 20px/1 var(--font-display); letter-spacing: .02em; display: flex; align-items: center; gap: 10px; }
+.brand-mark { width: 22px; height: 22px; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--accent); }
+.brand-mark i:nth-child(1), .brand-mark i:nth-child(4) { background: var(--accent); }
+.pill { font: 600 12px/1 var(--font-mono); padding: 7px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+
+.layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .layout { grid-template-columns: minmax(0, 1.35fr) minmax(330px, 1fr); align-items: start; } }
+
+.cam-wrap { position: relative; background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+#view { display: block; width: 100%; height: auto; touch-action: none; aspect-ratio: 4 / 3; max-width: 100%; }
+.cam-empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; text-align: center; padding: 20px; background: radial-gradient(circle at 50% 40%, #1d261e, #0b0f0c); }
+.cam-empty p { margin: 0; color: var(--muted); max-width: 34ch; }
+.cam-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.cam-tools label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.cam-tools input[type=range] { width: 120px; accent-color: var(--accent); }
+.diag { font: 12px/1.4 var(--font-mono); color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+.side { display: grid; gap: 14px; min-width: 0; }
+.prompt { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; }
+.prompt-label { font: 600 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); }
+.prompt-main { font: 700 22px/1.2 var(--font-display); text-wrap: balance; }
+.prompt-sub { color: var(--muted); }
+.note { font-size: 14px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
+.note.good { color: var(--good); } .note.warn { color: var(--warn); } .note.bad { color: var(--bad); }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.choices button { font: 600 16px var(--font-mono); }
+
+.clocks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.clock { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.clock .who { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clock .time { font: 600 24px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.clock.active { border-color: var(--accent); }
+.clock.active .time { color: var(--accent); }
+
+.board-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 12px; align-items: start; }
+.mini { display: grid; grid-template-columns: repeat(8, 1fr); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; aspect-ratio: 1; max-width: 100%; }
+.mini div { display: grid; place-items: center; font-size: clamp(16px, 5vw, 30px); line-height: 1; position: relative; aspect-ratio: 1; }
+.mini .l { background: var(--sq-light); } .mini .d { background: var(--sq-dark); }
+.mini .last { box-shadow: inset 0 0 0 100px rgba(228, 181, 90, .35); }
+.mini .pend { box-shadow: inset 0 0 0 3px var(--bad), inset 0 0 0 100px rgba(228, 106, 95, .25); }
+.pc-w { color: #fbfaf5; text-shadow: 0 0 1px #000, 0 0 2px #000, 1px 1px 0 #2a2a2a; }
+.pc-b { color: #16130f; text-shadow: 0 0 1px #fff8; }
+.moves { margin: 0; padding: 8px 10px; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 13px/1.6 var(--font-mono); max-height: 260px; overflow-y: auto; font-variant-numeric: tabular-nums; }
+.moves li { display: grid; grid-template-columns: 26px 1fr 1fr; }
+.moves .n { color: var(--muted); }
+.moves .empty { display: block; color: var(--muted); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.manual { display: flex; gap: 8px; }
+.manual input { flex: 1; width: 100%; }
+
+details.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+details.card > summary { cursor: pointer; padding: 12px 16px; font: 700 15px var(--font-display); list-style: none; display: flex; justify-content: space-between; align-items: center; }
+details.card > summary::after { content: '+'; color: var(--muted); font-family: var(--font-mono); }
+details.card[open] > summary::after { content: '−'; }
+.card-body { padding: 0 16px 16px; display: grid; gap: 12px; }
+.card-body p { margin: 0; color: var(--muted); font-size: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row > input, .row > select { flex: 1 1 140px; }
+.field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
+.err { color: var(--bad); font-size: 14px; }
+@media (max-width: 420px) { .board-row { grid-template-columns: minmax(0, 1fr); } .moves { max-height: 140px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Board Cam</div>
+  <span id="conn" class="pill">Lichess: not connected</span>
+</header>
+
+<div id="libErr" class="note bad" hidden>The chess library did not load. Check your internet connection and reload the page.</div>
+
+<main class="layout">
+  <section>
+    <div class="cam-wrap">
+      <canvas id="view" width="640" height="480" aria-label="Camera view of the chess board"></canvas>
+      <div id="camEmpty" class="cam-empty">
+        <strong style="font: 700 18px var(--font-display)">Point your phone at the board</strong>
+        <p>Use a stand above the board, looking down. Bright, even light works best.</p>
+        <div><button id="btnCam" class="primary">Start camera</button></div>
+        <p id="camErr" class="err" hidden></p>
+      </div>
+    </div>
+    <div class="cam-tools">
+      <button id="btnRotate" title="Turn the a1–h8 labels if they are on the wrong corners">Rotate labels</button>
+      <button id="btnClear">Re-tap corners</button>
+      <label><input id="chkHeat" type="checkbox"> Show changes</label>
+      <label>Sensitivity <input id="rngThr" type="range" min="8" max="45" step="1"></label>
+    </div>
+    <div id="diag" class="diag">Camera off</div>
+  </section>
+
+  <section class="side">
+    <div class="prompt" aria-live="polite">
+      <div id="pLabel" class="prompt-label">Step 1</div>
+      <div id="pMain" class="prompt-main">Start the camera</div>
+      <div id="pSub" class="prompt-sub"></div>
+      <div id="choices" class="choices" hidden></div>
+    </div>
+    <div id="note" class="note" hidden></div>
+
+    <div id="clocks" class="clocks" hidden>
+      <div id="clkTop" class="clock"><div class="who" id="nameTop">Opponent</div><div class="time" id="timeTop">–:–</div></div>
+      <div id="clkBot" class="clock"><div class="who" id="nameBot">You</div><div class="time" id="timeBot">–:–</div></div>
+    </div>
+
+    <div class="board-row">
+      <div id="mini" class="mini" aria-label="Digital board"></div>
+      <ol id="moves" class="moves"><li class="empty">No moves yet</li></ol>
+    </div>
+
+    <div id="gameActions" class="actions" hidden>
+      <button id="btnSync" title="Use when your real board matches the digital board exactly">My board matches</button>
+      <button id="btnDraw">Offer draw</button>
+      <button id="btnAbort">Abort</button>
+      <button id="btnResign" class="danger">Resign</button>
+      <button id="btnLeave">Leave game</button>
+    </div>
+    <form id="manualForm" class="manual" hidden>
+      <input id="manualMove" type="text" placeholder="Type a move, e.g. Nf3 or e2e4" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="submit">Play</button>
+    </form>
+
+    <details class="card" id="cardLichess" open>
+      <summary>Lichess account</summary>
+      <div class="card-body">
+        <p>Create a personal token on Lichess with <b>Play games with the board API</b> and <b>Create, accept, decline challenges</b> ticked, then paste it here. It stays on this phone only.</p>
+        <p><a href="https://lichess.org/account/oauth/token/create?scopes%5B%5D=board:play&amp;scopes%5B%5D=challenge:write&amp;description=Board%20Cam" target="_blank" rel="noopener">Create a token on lichess.org</a></p>
+        <div class="row">
+          <input id="token" type="password" placeholder="lip_…" autocomplete="off">
+          <button id="btnConnect" class="primary">Connect</button>
+        </div>
+        <div id="lichessErr" class="err" hidden></div>
+        <button id="btnLogout" hidden>Forget token</button>
+      </div>
+    </details>
+
+    <details class="card" id="cardGame" open>
+      <summary>New game</summary>
+      <div class="card-body">
+        <div class="field">Time control
+          <select id="tc">
+            <option value="10+0">10 min</option>
+            <option value="10+5">10 + 5</option>
+            <option value="15+10" selected>15 + 10</option>
+            <option value="30+0">30 min</option>
+            <option value="30+20">30 + 20</option>
+          </select>
+        </div>
+        <div class="row">
+          <select id="aiLevel" aria-label="Stockfish level">
+            <option value="1">Stockfish level 1</option><option value="2">Level 2</option><option value="3" selected>Level 3</option>
+            <option value="4">Level 4</option><option value="5">Level 5</option><option value="6">Level 6</option>
+            <option value="7">Level 7</option><option value="8">Level 8</option>
+          </select>
+          <select id="aiColor" aria-label="Your colour">
+            <option value="white">I play White</option><option value="black">I play Black</option><option value="random">Random colour</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="btnAI" class="primary" disabled>Play the computer</button>
+          <button id="btnSeek" disabled>Find a human opponent</button>
+        </div>
+        <p>Games against people are casual (unrated). You can also start or accept a game on lichess.org and it will appear here automatically.</p>
+        <div id="challenges" class="actions"></div>
+        <hr class="sep">
+        <p>No account yet? Test the camera first. Practice mode reads moves for both sides, offline.</p>
+        <div class="row">
+          <button id="btnPractice">Practice mode</button>
+          <label class="field" style="flex-direction:row; display:flex; align-items:center; gap:8px">Promote to
+            <select id="promo"><option value="q">Queen</option><option value="r">Rook</option><option value="b">Bishop</option><option value="n">Knight</option></select>
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary>Camera &amp; voice</summary>
+      <div class="card-body">
+        <div class="field">Camera <select id="camSel"><option value="">Back camera</option></select></div>
+        <label class="row"><input id="chkVoice" type="checkbox"> Read the opponent’s moves aloud</label>
+        <p>Tips: keep the whole board in view with a little margin. A camera directly overhead reads moves most reliably. If a move is not read, straighten the pieces, or type it in.</p>
+      </div>
+    </details>
+  </section>
+</main>
+
+<video id="video" playsinline muted style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none"></video>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const FILES = 'abcdefgh';
+const sqName = s => FILES[s % 8] + (Math.floor(s / 8) + 1);
+const sqIdx = n => (n.charCodeAt(0) - 97) + (parseInt(n[1], 10) - 1) * 8;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('bc_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('bc_' + k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem('bc_' + k); } catch (e) {} },
+};
+
+if (typeof Chess === 'undefined') $('#libErr').hidden = false;
+
+// ---------- app state ----------
+const S = {
+  token: store.get('token', ''), me: null,
+  corners: store.get('corners', null), rot: store.get('rot', 0),
+  thr: store.get('thr', 22), heat: store.get('heat', true), voice: store.get('voice', true), promo: store.get('promo', 'q'),
+  mode: null,              // 'practice' | 'lichess'
+  gameId: null, myColor: 'w', initialFen: null,
+  serverMoves: [], server: null, status: null, winner: null, over: false,
+  wtime: null, btime: null, clockAt: 0, names: { w: 'White', b: 'Black' },
+  phys: null, physUci: [], needRef: false, desync: false,
+  candidates: null, note: '', noteKind: '', announcedEnd: false,
+};
+
+// ---------- camera ----------
+const video = $('#video');
+const view = $('#view'), vctx = view.getContext('2d');
+const proc = document.createElement('canvas'), pctx = proc.getContext('2d', { willReadFrequently: true });
+const PROC_W = 640;
+let stream = null, wakeLock = null;
+
+async function startCamera(deviceId) {
+  $('#camErr').hidden = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return camError('This browser cannot use the camera here. Open the page from its https:// address in Chrome.');
+  }
+  stopCamera();
+  const size = { width: { ideal: 1280 }, height: { ideal: 960 } };
+  const video_c = deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size };
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: video_c }); }
+  catch (e) { return camError('The camera could not start (' + e.message + '). Allow camera access for this site in your browser settings, then try again.'); }
+  video.srcObject = stream;
+  try { await video.play(); } catch (e) {}
+  if (!video.videoWidth) await new Promise(r => video.addEventListener('loadedmetadata', r, { once: true }));
+  $('#camEmpty').hidden = true;
+  listCameras();
+  requestWake();
+  render();
+}
+function stopCamera() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; }
+function camError(msg) { const el = $('#camErr'); el.textContent = msg; el.hidden = false; }
+async function listCameras() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('#camSel'), cur = sel.value;
+    sel.innerHTML = '<option value="">Back camera</option>';
+    devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Camera ' + (i + 1); sel.appendChild(o); });
+    sel.value = cur;
+  } catch (e) {}
+}
+async function requestWake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && stream) requestWake(); });
+
+// ---------- board geometry ----------
+function homography(src, dst) {
+  const A = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [X, Y] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -x * X, -y * X, X]);
+    A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y, Y]);
+  }
+  const n = 8;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    const pv = A[c][c];
+    if (Math.abs(pv) < 1e-10) return null;
+    for (let k = c; k <= n; k++) A[c][k] /= pv;
+    for (let r = 0; r < n; r++) if (r !== c) { const f = A[r][c]; if (f) for (let k = c; k <= n; k++) A[r][k] -= f * A[c][k]; }
+  }
+  const h = A.map(r => r[n]); h.push(1); return h;
+}
+function applyH(h, u, v) { const w = h[6] * u + h[7] * v + 1; return [(h[0] * u + h[1] * v + h[2]) / w, (h[3] * u + h[4] * v + h[5]) / w]; }
+
+// Corners are stored normalised (0..1) in screen order TL, TR, BR, BL.
+function orderCorners(pts) {
+  const cx = pts.reduce((a, p) => a + p[0], 0) / 4, cy = pts.reduce((a, p) => a + p[1], 0) / 4;
+  const s = pts.slice().sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  let tl = 0; s.forEach((p, i) => { if (p[0] + p[1] < s[tl][0] + s[tl][1]) tl = i; });
+  return s.slice(tl).concat(s.slice(0, tl));
+}
+const BOARD_CORNERS = [[0, 0], [8, 0], [8, 8], [0, 8]]; // a1, h1, h8, a8
+const CORNER_NAMES = ['a1', 'h1', 'h8', 'a8'];
+function computeH() {
+  if (!S.corners || S.corners.length !== 4 || !proc.width) return null;
+  const px = S.corners.map(([x, y]) => [x * proc.width, y * proc.height]);
+  const screen = [px[3], px[2], px[1], px[0]]; // BL, BR, TR, TL
+  return homography(BOARD_CORNERS, [0, 1, 2, 3].map(i => screen[(i + S.rot) % 4]));
+}
+
+// ---------- vision ----------
+const G = 16, P = G * G, INSET = 0.2;
+let H = null, sampleSrc = null, cur = null, prev = null, ref = null, refPrev = null, diffs = null;
+let prevValid = false, motion = 0, noise = 3, stable = 0, changedCount = 0;
+const STABLE_N = 6;
+
+function buildSampler() {
+  H = computeH(); sampleSrc = null; ref = null; prevValid = false; diffs = null;
+  if (!H) return;
+  const W = proc.width, Hh = proc.height;
+  sampleSrc = new Int32Array(64 * P);
+  let k = 0;
+  for (let s = 0; s < 64; s++) {
+    const f = s % 8, r = Math.floor(s / 8);
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const u = f + INSET + (1 - 2 * INSET) * (i + 0.5) / G, v = r + INSET + (1 - 2 * INSET) * (j + 0.5) / G;
+      const [x, y] = applyH(H, u, v);
+      const xi = Math.min(W - 1, Math.max(0, Math.round(x))), yi = Math.min(Hh - 1, Math.max(0, Math.round(y)));
+      sampleSrc[k++] = (yi * W + xi) * 4;
+    }
+  }
+  cur = new Uint8Array(64 * P * 3); prev = new Uint8Array(64 * P * 3);
+  if (S.mode && !S.desync) S.needRef = true;
+}
+function sample(img) {
+  for (let k = 0, o = 0; k < sampleSrc.length; k++, o += 3) { const q = sampleSrc[k]; cur[o] = img[q]; cur[o + 1] = img[q + 1]; cur[o + 2] = img[q + 2]; }
+}
+function meanDiff(a, b) {
+  let sum = 0; for (let i = 0; i < a.length; i += 6) sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+  return sum / (a.length / 6 * 3);
+}
+function squareDiffs(a, b) {
+  const d = new Float32Array(64);
+  for (let s = 0; s < 64; s++) {
+    let sum = 0; const o0 = s * P * 3, o1 = o0 + P * 3;
+    for (let i = o0; i < o1; i++) sum += Math.abs(a[i] - b[i]);
+    d[s] = sum / (P * 3);
+  }
+  const med = Array.from(d).sort((x, y) => x - y)[32];
+  for (let s = 0; s < 64; s++) d[s] = Math.max(0, d[s] - med);
+  return d;
+}
+
+function ensureSize() {
+  if (!video.videoWidth) return false;
+  const h = Math.round(PROC_W * video.videoHeight / video.videoWidth);
+  if (proc.width !== PROC_W || proc.height !== h) {
+    proc.width = view.width = PROC_W; proc.height = view.height = h;
+    view.style.aspectRatio = PROC_W + ' / ' + h;
+    buildSampler();
+  }
+  return true;
+}
+
+function tick() {
+  if (!stream || video.readyState < 2 || !ensureSize()) return;
+  pctx.drawImage(video, 0, 0, proc.width, proc.height);
+  vctx.drawImage(proc, 0, 0);
+  if (sampleSrc) {
+    sample(pctx.getImageData(0, 0, proc.width, proc.height).data);
+    motion = prevValid ? meanDiff(cur, prev) : 99;
+    prev.set(cur); prevValid = true;
+    const mt = Math.max(4, noise * 2.5);
+    if (motion < mt) { stable++; noise = noise * 0.95 + motion * 0.05; } else stable = 0;
+    diffs = ref ? squareDiffs(cur, ref) : null;
+    changedCount = diffs ? diffs.filter(x => x > S.thr).length : 0;
+    if (S.needRef && stable >= STABLE_N) { ref = cur.slice(); S.needRef = false; diffs = null; render(); }
+    else if (ref && stable === STABLE_N) analyze();
+    $('#diag').textContent = `motion ${motion.toFixed(1)} · noise ${noise.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}`;
+  } else {
+    $('#diag').textContent = 'Tap the 4 corners of the playing area';
+  }
+  drawOverlay();
+}
+setInterval(tick, 110);
+
+// ---------- move recognition ----------
+function moveSquares(m) {
+  const sq = [m.from, m.to], r = m.color === 'w' ? '1' : '8';
+  if (m.flags.includes('k')) sq.push('h' + r, 'f' + r);
+  if (m.flags.includes('q')) sq.push('a' + r, 'd' + r);
+  if (m.flags.includes('e')) sq.push(m.to[0] + m.from[1]);
+  return sq.map(sqIdx);
+}
+const uciOf = m => m.from + m.to + (m.promotion || '');
+function legalCands() {
+  return S.phys.moves({ verbose: true })
+    .filter(m => !m.promotion || m.promotion === S.promo)
+    .map(m => ({ m, sq: moveSquares(m) }));
+}
+function findMove(chess, uci) {
+  return chess.moves({ verbose: true }).find(m => uciOf(m) === uci) || null;
+}
+function rank(cands, d, T) {
+  const changed = []; for (let s = 0; s < 64; s++) if (d[s] > T) changed.push(s);
+  return cands.map(c => {
+    const set = new Set(c.sq); let sum = 0, min = Infinity, extra = 0;
+    for (const s of c.sq) { sum += d[s]; min = Math.min(min, d[s]); }
+    for (const s of changed) if (!set.has(s)) extra += d[s];
+    return { m: c.m, min, score: sum - 0.6 * extra };
+  }).filter(c => c.min >= 0.5 * T && c.score > 0).sort((a, b) => b.score - a.score);
+}
+function pendingMove() {
+  if (S.mode !== 'lichess' || S.desync || !S.phys) return null;
+  if (S.physUci.length >= S.serverMoves.length) return null;
+  return findMove(S.phys, S.serverMoves[S.physUci.length]);
+}
+function analyze() {
+  const d = diffs, T = S.thr;
+  if (!d) return;
+  const changed = d.filter(x => x > T).length;
+  if (changed === 0) { ref.set(cur); return; } // absorb slow lighting changes
+  if (!S.phys || S.over || S.desync) return;
+  if (changed > 12) return setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn');
+  const pend = pendingMove();
+  let cands;
+  if (pend) cands = [{ m: pend, sq: moveSquares(pend) }];
+  else if (S.mode === 'practice' || (S.phys.turn() === S.myColor && S.status === 'started')) cands = legalCands();
+  else return setNote('It is your opponent’s turn. Leave the board as it is.', 'warn');
+  const ranked = rank(cands, d, T);
+  if (!ranked.length) {
+    return setNote(pend ? `That does not look like ${pend.san}. Play the opponent’s move exactly as shown.`
+                        : 'Could not read that move. Straighten the pieces, or type the move below.', 'warn');
+  }
+  const [best, second] = ranked;
+  if (pend || !second || best.score - second.score >= 0.75 * T) commit(best.m, 'camera');
+  else { S.candidates = ranked.slice(0, 3).map(c => c.m); setNote('', ''); render(); }
+}
+function commit(m, source) {
+  S.candidates = null;
+  const u = uciOf(m), pend = pendingMove();
+  refPrev = ref ? ref.slice() : null;
+  if (S.mode === 'lichess') {
+    if (pend) {
+      if (uciOf(pend) !== u) return setNote(`First play the opponent’s move ${pend.san} on your board.`, 'warn');
+      S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
+      setNote('Board in sync. Your move.', 'good');
+    } else if (S.phys.turn() === S.myColor && S.status === 'started') {
+      S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
+      sendMove(u, m.san, source);
+    } else return setNote('It is not your turn.', 'warn');
+  } else {
+    S.phys.move({ from: m.from, to: m.to, promotion: m.promotion }); S.physUci.push(u);
+    setNote('Read: ' + m.san, 'good');
+    speak(sayMove(m.san));
+  }
+  if (source === 'camera' && ref) ref.set(cur); else S.needRef = true;
+  render();
+}
+async function sendMove(u, san, source) {
+  setNote('Sending ' + san + '…', '');
+  try {
+    await api(`/api/board/game/${S.gameId}/move/${u}`, { method: 'POST' });
+    setNote('Played ' + san, 'good');
+  } catch (e) {
+    if (S.physUci[S.physUci.length - 1] === u) { S.phys.undo(); S.physUci.pop(); }
+    if (source === 'camera' && refPrev) { ref = refPrev; S.needRef = false; }
+    setNote(`Lichess did not accept ${san}. Put the piece back. (${e.message})`, 'bad');
+    render();
+  }
+}
+
+// ---------- speech ----------
+function speak(text) {
+  if (!S.voice || !('speechSynthesis' in window) || !text) return;
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'en-US'; u.rate = 0.95; speechSynthesis.speak(u); } catch (e) {}
+}
+const PIECE_NAMES = { k: 'King', q: 'Queen', r: 'Rook', b: 'Bishop', n: 'Knight', p: 'Pawn' };
+function sayMove(san) {
+  const end = san.includes('#') ? ', checkmate' : san.includes('+') ? ', check' : '';
+  let s = san.replace(/[+#]/g, '');
+  if (s === 'O-O-O') return 'Castles queenside' + end;
+  if (s === 'O-O') return 'Castles kingside' + end;
+  let promo = '';
+  const pm = s.match(/=([QRBN])/); if (pm) { promo = ', promotes to ' + PIECE_NAMES[pm[1].toLowerCase()]; s = s.replace(/=[QRBN]/, ''); }
+  let out = '';
+  if ('KQRBN'.includes(s[0])) { out = PIECE_NAMES[s[0].toLowerCase()] + ' '; s = s.slice(1); }
+  out += s.replace('x', ' takes ');
+  return out.replace(/\s+/g, ' ').trim() + promo + end;
+}
+
+// ---------- Lichess ----------
+const LICHESS = 'https://lichess.org';
+let evAbort = null, gameAbort = null, seekAbort = null;
+async function errText(res) {
+  let t = '';
+  try { t = await res.text(); const j = JSON.parse(t); t = j.error || j.message || t; if (typeof t === 'object') t = JSON.stringify(t); } catch (e) {}
+  return `Lichess error ${res.status}${t ? ': ' + t : ''}`;
+}
+async function api(path, opts = {}) {
+  const res = await fetch(LICHESS + path, {
+    method: opts.method || 'GET',
+    headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/json' },
+    body: opts.form ? new URLSearchParams(opts.form) : undefined,
+    signal: opts.signal,
+  });
+  if (!res.ok) throw new Error(await errText(res));
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('json') ? res.json() : res.text();
+}
+async function streamNdjson(path, onLine, signal, opts = {}) {
+  const res = await fetch(LICHESS + path, {
+    method: opts.method || 'GET',
+    headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/x-ndjson' },
+    body: opts.form ? new URLSearchParams(opts.form) : undefined,
+    signal,
+  });
+  if (!res.ok) throw new Error(await errText(res));
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (line) { try { onLine(JSON.parse(line)); } catch (e) { console.error(e); } }
+    }
+  }
+}
+function setConn(text, kind) { const el = $('#conn'); el.textContent = text; el.className = 'pill ' + (kind || ''); }
+
+async function connect() {
+  const t = $('#token').value.trim() || S.token;
+  $('#lichessErr').hidden = true;
+  if (!t) { $('#lichessErr').textContent = 'Paste your Lichess token first.'; $('#lichessErr').hidden = false; return; }
+  S.token = t;
+  setConn('Lichess: connecting…');
+  try {
+    S.me = await api('/api/account');
+    store.set('token', t);
+    setConn('Lichess: ' + S.me.username, 'good');
+    $('#token').value = ''; $('#token').placeholder = 'Connected as ' + S.me.username;
+    $('#btnLogout').hidden = false;
+    $('#cardLichess').open = false;
+    runEvents();
+  } catch (e) {
+    S.me = null;
+    setConn('Lichess: not connected', 'bad');
+    $('#lichessErr').textContent = 'Could not connect. Check the token and its permissions. ' + e.message;
+    $('#lichessErr').hidden = false;
+  }
+  render();
+}
+function logout() {
+  if (evAbort) evAbort.abort();
+  store.del('token'); S.token = ''; S.me = null;
+  $('#token').placeholder = 'lip_…'; $('#btnLogout').hidden = true;
+  setConn('Lichess: not connected');
+  render();
+}
+async function runEvents() {
+  if (evAbort) evAbort.abort();
+  const ctl = evAbort = new AbortController();
+  let delay = 2000;
+  while (!ctl.signal.aborted) {
+    try { await streamNdjson('/api/stream/event', onEvent, ctl.signal); delay = 2000; }
+    catch (e) { if (ctl.signal.aborted) return; console.warn(e); }
+    await sleep(delay); delay = Math.min(delay * 2, 30000);
+  }
+}
+const challenges = new Map();
+function onEvent(e) {
+  if (e.type === 'gameStart') {
+    const id = e.game.gameId || e.game.id;
+    if (S.mode !== 'lichess' || S.over || !S.gameId) openGame(id);
+  } else if (e.type === 'challenge') {
+    const c = e.challenge;
+    if (S.me && c.destUser && c.destUser.id === S.me.id) { challenges.set(c.id, c); renderChallenges(); }
+  } else if (e.type === 'challengeCanceled' || e.type === 'challengeDeclined') {
+    challenges.delete(e.challenge.id); renderChallenges();
+  }
+}
+function renderChallenges() {
+  const box = $('#challenges'); box.innerHTML = '';
+  challenges.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'primary';
+    b.textContent = `Accept ${c.challenger ? c.challenger.name : 'challenge'} · ${c.timeControl && c.timeControl.show ? c.timeControl.show : ''}`;
+    b.onclick = async () => {
+      try { await api(`/api/challenge/${c.id}/accept`, { method: 'POST' }); } catch (err) { setNote(err.message, 'bad'); }
+      challenges.delete(c.id); renderChallenges();
+    };
+    box.appendChild(b);
+  });
+}
+function parseTc() { const [m, i] = $('#tc').value.split('+').map(Number); return { min: m, inc: i }; }
+async function playAI() {
+  const { min, inc } = parseTc();
+  setNote('Starting a game against Stockfish…', '');
+  try {
+    const g = await api('/api/challenge/ai', { method: 'POST', form: { level: $('#aiLevel').value, 'clock.limit': min * 60, 'clock.increment': inc, color: $('#aiColor').value } });
+    openGame(g.id);
+  } catch (e) { setNote(e.message, 'bad'); }
+}
+async function seek() {
+  if (seekAbort) { seekAbort.abort(); return; }
+  const { min, inc } = parseTc();
+  const ctl = seekAbort = new AbortController();
+  render();
+  setNote(`Looking for an opponent (${min}+${inc})…`, '');
+  try { await streamNdjson('/api/board/seek', () => {}, ctl.signal, { method: 'POST', form: { time: min, increment: inc, rated: 'false', color: 'random' } }); }
+  catch (e) { if (e.name !== 'AbortError') setNote(e.message, 'bad'); else setNote('Search cancelled.', ''); }
+  finally { if (seekAbort === ctl) seekAbort = null; render(); }
+}
+function openGame(id) {
+  if (S.gameId === id && S.mode === 'lichess' && !S.over && gameAbort) return;
+  if (gameAbort) gameAbort.abort();
+  if (seekAbort) { seekAbort.abort(); seekAbort = null; }
+  const ctl = gameAbort = new AbortController();
+  Object.assign(S, { mode: 'lichess', gameId: id, serverMoves: [], server: null, over: false, status: 'started', winner: null,
+    phys: null, physUci: [], desync: false, candidates: null, announcedEnd: false });
+  setNote('Joining game…', '');
+  $('#cardGame').open = false;
+  streamNdjson('/api/board/game/stream/' + id, d => onGameLine(d, id), ctl.signal)
+    .catch(e => { if (!ctl.signal.aborted) setNote('Lost the game connection. ' + e.message + ' Reload the page to reconnect.', 'bad'); });
+  render();
+}
+function playerName(p) {
+  if (!p) return '?';
+  if (p.aiLevel) return 'Stockfish level ' + p.aiLevel;
+  return p.name || p.id || 'Anonymous';
+}
+function onGameLine(d, id) {
+  if (id !== S.gameId) return;
+  if (d.type === 'gameFull') {
+    S.myColor = (S.me && d.black && d.black.id === S.me.id) ? 'b' : 'w';
+    S.names = { w: playerName(d.white), b: playerName(d.black) };
+    S.initialFen = d.initialFen && d.initialFen !== 'startpos' ? d.initialFen : null;
+    onServerState(d.state, true);
+    if (S.serverMoves.length === 0) { resync(); setNote(`You play ${S.myColor === 'w' ? 'White' : 'Black'}. Set up the pieces in the starting position.`, ''); }
+    else { S.desync = true; setNote('This game already has moves. Set your board to match the digital board, then tap “My board matches”.', 'warn'); }
+    speak(`Game started. You play ${S.myColor === 'w' ? 'white' : 'black'}.`);
+    render();
+  } else if (d.type === 'gameState') {
+    onServerState(d, false);
+  } else if (d.type === 'opponentGone') {
+    setNote(d.gone ? 'Your opponent left the game. You may be able to claim victory on lichess.org.' : 'Your opponent is back.', 'warn');
+  }
+}
+function newChess() { return S.initialFen ? new Chess(S.initialFen) : new Chess(); }
+function moveFromUci(c, u) {
+  const from = u.slice(0, 2); let to = u.slice(2, 4);
+  const p = c.get(from);
+  if (p && p.type === 'k') {
+    if (from === 'e1' && to === 'h1') to = 'g1'; if (from === 'e1' && to === 'a1') to = 'c1';
+    if (from === 'e8' && to === 'h8') to = 'g8'; if (from === 'e8' && to === 'a8') to = 'c8';
+  }
+  return c.move({ from, to, promotion: u[4] });
+}
+function onServerState(st, initial) {
+  const raw = (st.moves || '').trim() ? st.moves.trim().split(/\s+/) : [];
+  const c = newChess(), norm = [];
+  for (const u of raw) { const m = moveFromUci(c, u); if (!m) break; norm.push(uciOf(m)); }
+  const prevLen = S.serverMoves.length;
+  S.serverMoves = norm; S.server = c;
+  S.wtime = st.wtime; S.btime = st.btime; S.clockAt = performance.now();
+  S.status = st.status; S.winner = st.winner || null;
+  if (!S.desync && S.phys) {
+    for (let i = 0; i < Math.min(S.physUci.length, norm.length); i++) {
+      if (S.physUci[i] !== norm[i]) { S.desync = true; setNote('The game changed on Lichess (for example a takeback). Set your board to match the digital board, then tap “My board matches”.', 'warn'); break; }
+    }
+  }
+  if (!initial && norm.length > prevLen) {
+    const hist = c.history({ verbose: true }), last = hist[hist.length - 1];
+    if (last && last.color !== S.myColor) speak('Opponent: ' + sayMove(last.san));
+  }
+  S.over = !['created', 'started'].includes(S.status);
+  if (S.over && !S.announcedEnd) { S.announcedEnd = true; speak(resultText()); $('#cardGame').open = true; }
+  render();
+}
+function resultText() {
+  const st = S.status;
+  if (st === 'aborted') return 'Game aborted.';
+  if (st === 'draw' || st === 'stalemate') return st === 'stalemate' ? 'Draw by stalemate.' : 'Game drawn.';
+  if (!S.winner) return 'Game over.';
+  const youWon = (S.winner === 'white') === (S.myColor === 'w');
+  const how = { mate: 'by checkmate', resign: 'by resignation', outoftime: 'on time', timeout: 'opponent left' }[st] || '';
+  return (youWon ? 'You won ' : 'You lost ') + how + '.';
+}
+function resync() {
+  if (S.mode === 'lichess') {
+    S.phys = newChess(); S.physUci = [];
+    for (const u of S.serverMoves) { const m = moveFromUci(S.phys, u); if (!m) break; S.physUci.push(uciOf(m)); }
+  }
+  S.desync = false; S.candidates = null; S.needRef = true; ref = null;
+  render();
+}
+function startPractice() {
+  if (gameAbort) gameAbort.abort();
+  Object.assign(S, { mode: 'practice', gameId: null, myColor: 'w', initialFen: null, phys: new Chess(), physUci: [], serverMoves: [], server: null,
+    over: false, status: 'started', desync: false, candidates: null, needRef: true, names: { w: 'White', b: 'Black' } });
+  ref = null;
+  setNote('Set up the pieces in the starting position. Moves are read for both sides.', '');
+  render();
+}
+function leaveGame() {
+  if (gameAbort) gameAbort.abort(); gameAbort = null;
+  Object.assign(S, { mode: null, gameId: null, phys: null, physUci: [], serverMoves: [], server: null, over: false, desync: false, candidates: null });
+  ref = null; setNote('', ''); $('#cardGame').open = true; render();
+}
+
+// ---------- UI ----------
+function setNote(text, kind) { S.note = text; S.noteKind = kind || ''; renderNote(); }
+function renderNote() { const n = $('#note'); n.hidden = !S.note; n.textContent = S.note; n.className = 'note ' + S.noteKind; }
+
+function promptState() {
+  if (!stream) return ['Step 1', 'Start the camera', 'Mount your phone above the board, looking down.'];
+  if (!H) {
+    const n = S.corners ? S.corners.length : 0;
+    return ['Step 2', `Tap the 4 corners of the board (${n}/4)`, 'Tap the outer corners of the 64 squares, not the wooden border. Drag a corner later to fine-tune it.'];
+  }
+  if (!S.mode) return ['Step 3', 'Check the labels, then pick a game', 'The a1 label must sit on the corner at White’s left. If not, tap “Rotate labels”. Then connect Lichess below, or try Practice mode.'];
+  if (S.over) return ['Game over', resultText(), 'Start another game below.'];
+  if (S.desync) return ['Set up your board', 'Make your board match the digital board', 'Then tap “My board matches”.'];
+  if (S.mode === 'lichess' && !S.phys) return ['Lichess', 'Joining game…', ''];
+  if (S.needRef || !ref) return ['Reading the board', 'Hold still…', 'Keep hands away from the board for a moment.'];
+  if (S.candidates) return ['Check', 'Which move did you play?', 'Tap the right one.'];
+  const pend = pendingMove();
+  if (pend) return ['Opponent played ' + pend.san, `Move the ${PIECE_NAMES[pend.piece].toLowerCase()} ${pend.from} → ${pend.to}`, sayMove(pend.san)];
+  if (S.mode === 'practice') return [S.phys.turn() === 'w' ? 'White to move' : 'Black to move', 'Make a move on the board', 'It is read when your hand leaves the board.'];
+  if (S.physUci.length > S.serverMoves.length) return ['Your move', 'Sending to Lichess…', ''];
+  if (S.phys.turn() === S.myColor) return ['Your move', 'Make your move on the board', 'It is sent to Lichess when your hand leaves the board.'];
+  return ['Waiting', 'Opponent is thinking…', 'You will hear their move.'];
+}
+
+const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+function render() {
+  const [label, main, sub] = promptState();
+  $('#pLabel').textContent = label; $('#pMain').textContent = main; $('#pSub').textContent = sub || '';
+  const ch = $('#choices');
+  ch.hidden = !S.candidates; ch.innerHTML = '';
+  (S.candidates || []).forEach(m => { const b = document.createElement('button'); b.textContent = m.san; b.onclick = () => commit(m, 'camera'); ch.appendChild(b); });
+  renderNote();
+
+  const pos = S.mode === 'lichess' ? (S.server || S.phys) : S.phys;
+  const flip = S.myColor === 'b';
+  const hist = pos ? pos.history({ verbose: true }) : [];
+  const last = hist[hist.length - 1];
+  const pend = pendingMove();
+  const hl = new Set(), pd = new Set();
+  if (pend) { pd.add(pend.from); pd.add(pend.to); } else if (last) { hl.add(last.from); hl.add(last.to); }
+  const board = pos ? pos.board() : new Chess().board();
+  const mini = $('#mini'); mini.innerHTML = '';
+  for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+    const r = flip ? 7 - row : row, c = flip ? 7 - col : col;
+    const name = FILES[c] + (8 - r), p = board[r][c];
+    const cell = document.createElement('div');
+    cell.className = ((r + c) % 2 ? 'd' : 'l') + (hl.has(name) ? ' last' : '') + (pd.has(name) ? ' pend' : '');
+    if (p) { cell.textContent = GLYPH[p.type] + '︎'; cell.classList.add(p.color === 'w' ? 'pc-w' : 'pc-b'); }
+    mini.appendChild(cell);
+  }
+  const ol = $('#moves'); ol.innerHTML = '';
+  const sans = hist.map(m => m.san);
+  if (!sans.length) ol.innerHTML = '<li class="empty">No moves yet</li>';
+  for (let i = 0; i < sans.length; i += 2) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="n">${i / 2 + 1}.</span><span></span><span></span>`;
+    li.children[1].textContent = sans[i]; li.children[2].textContent = sans[i + 1] || '';
+    ol.appendChild(li);
+  }
+  ol.scrollTop = ol.scrollHeight;
+
+  const inGame = !!S.mode;
+  $('#gameActions').hidden = !inGame;
+  $('#manualForm').hidden = !inGame || S.over;
+  const live = S.mode === 'lichess' && !S.over;
+  $('#btnDraw').hidden = $('#btnAbort').hidden = $('#btnResign').hidden = !live;
+  $('#clocks').hidden = S.mode !== 'lichess';
+  $('#btnAI').disabled = $('#btnSeek').disabled = !S.me;
+  $('#btnSeek').textContent = seekAbort ? 'Cancel search' : 'Find a human opponent';
+  renderClocks();
+}
+function fmt(ms) {
+  if (ms == null) return '–:–';
+  ms = Math.max(0, ms);
+  const s = ms / 1000;
+  if (s < 10) return '0:0' + s.toFixed(1);
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m + ':' + String(r).padStart(2, '0');
+}
+function renderClocks() {
+  if (S.mode !== 'lichess') return;
+  const turn = S.server ? S.server.turn() : 'w';
+  const running = !S.over && S.serverMoves.length >= 2;
+  const el = performance.now() - S.clockAt;
+  const t = { w: S.wtime - (running && turn === 'w' ? el : 0), b: S.btime - (running && turn === 'b' ? el : 0) };
+  const me = S.myColor, op = me === 'w' ? 'b' : 'w';
+  $('#nameTop').textContent = S.names[op]; $('#timeTop').textContent = fmt(S.wtime == null ? null : t[op]);
+  $('#nameBot').textContent = S.names[me] + ' (you)'; $('#timeBot').textContent = fmt(S.wtime == null ? null : t[me]);
+  $('#clkTop').classList.toggle('active', !S.over && turn === op);
+  $('#clkBot').classList.toggle('active', !S.over && turn === me);
+}
+setInterval(renderClocks, 200);
+
+// ---------- overlay ----------
+function quad(f, r) { return [[f, r], [f + 1, r], [f + 1, r + 1], [f, r + 1]].map(([u, v]) => applyH(H, u, v)); }
+function drawOverlay() {
+  const c = vctx, W = view.width, Hh = view.height;
+  const pts = (S.corners || []).map(([x, y]) => [x * W, y * Hh]);
+  if (H) {
+    if (S.heat && diffs) {
+      for (let s = 0; s < 64; s++) {
+        const v = diffs[s]; if (v < S.thr * 0.5) continue;
+        const q = quad(s % 8, Math.floor(s / 8));
+        c.fillStyle = v > S.thr ? `rgba(228,106,95,${Math.min(0.6, v / S.thr * 0.3)})` : 'rgba(228,181,90,0.2)';
+        c.beginPath(); q.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); c.fill();
+      }
+    }
+    c.strokeStyle = 'rgba(228,181,90,0.8)'; c.lineWidth = 1.5; c.beginPath();
+    for (let i = 0; i <= 8; i++) {
+      let a = applyH(H, i, 0), b = applyH(H, i, 8); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
+      a = applyH(H, 0, i); b = applyH(H, 8, i); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
+    }
+    c.stroke();
+    c.font = '600 13px "IBM Plex Mono", monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.fillStyle = '#f4e3b8';
+    for (let i = 0; i < 8; i++) {
+      let p = applyH(H, i + 0.5, 0.18); c.strokeText(FILES[i], p[0], p[1]); c.fillText(FILES[i], p[0], p[1]);
+      p = applyH(H, 0.16, i + 0.5); c.strokeText(String(i + 1), p[0], p[1]); c.fillText(String(i + 1), p[0], p[1]);
+    }
+    const pend = pendingMove();
+    const arrows = pend ? [pend] : (S.candidates || []);
+    arrows.forEach((m, k) => drawArrow(sqIdx(m.from), sqIdx(m.to), pend ? '#e46a5f' : ['#e4b55a', '#73c48f', '#8fb4e4'][k]));
+  }
+  pts.forEach((p, i) => {
+    c.beginPath(); c.arc(p[0], p[1], 9, 0, Math.PI * 2);
+    c.fillStyle = 'rgba(228,181,90,0.9)'; c.fill(); c.lineWidth = 2; c.strokeStyle = '#1d1708'; c.stroke();
+  });
+  if (H) {
+    c.font = '700 14px "IBM Plex Mono", monospace';
+    BOARD_CORNERS.forEach(([u, v], i) => {
+      const [x, y] = applyH(H, u, v);
+      const tx = Math.min(W - 18, Math.max(18, x)), ty = Math.min(Hh - 22, Math.max(22, y + (v === 0 ? 18 : -18)));
+      c.lineWidth = 4; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.strokeText(CORNER_NAMES[i], tx, ty);
+      c.fillStyle = '#e4b55a'; c.fillText(CORNER_NAMES[i], tx, ty);
+    });
+  }
+}
+function drawArrow(a, b, color) {
+  const pa = applyH(H, a % 8 + 0.5, Math.floor(a / 8) + 0.5), pb = applyH(H, b % 8 + 0.5, Math.floor(b / 8) + 0.5);
+  const c = vctx, ang = Math.atan2(pb[1] - pa[1], pb[0] - pa[0]), L = 16;
+  c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 6; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(pa[0], pa[1]); c.lineTo(pb[0] - Math.cos(ang) * L * 0.8, pb[1] - Math.sin(ang) * L * 0.8); c.stroke();
+  c.beginPath(); c.moveTo(pb[0], pb[1]);
+  c.lineTo(pb[0] - L * Math.cos(ang - 0.45), pb[1] - L * Math.sin(ang - 0.45));
+  c.lineTo(pb[0] - L * Math.cos(ang + 0.45), pb[1] - L * Math.sin(ang + 0.45));
+  c.closePath(); c.fill();
+}
+
+// ---------- corner taps ----------
+let dragIdx = -1;
+function toNorm(e) { const r = view.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; }
+view.addEventListener('pointerdown', e => {
+  if (!stream) return;
+  const p = toNorm(e), r = view.getBoundingClientRect();
+  if (S.corners && S.corners.length === 4) {
+    let best = -1, bd = 36;
+    S.corners.forEach((c, i) => { const d = Math.hypot((c[0] - p[0]) * r.width, (c[1] - p[1]) * r.height); if (d < bd) { bd = d; best = i; } });
+    if (best >= 0) { dragIdx = best; view.setPointerCapture(e.pointerId); }
+    return;
+  }
+  S.corners = (S.corners || []).concat([p]);
+  if (S.corners.length === 4) { S.corners = orderCorners(S.corners); store.set('corners', S.corners); buildSampler(); }
+  render();
+});
+view.addEventListener('pointermove', e => {
+  if (dragIdx < 0) return;
+  S.corners[dragIdx] = toNorm(e).map(v => Math.min(1, Math.max(0, v)));
+  H = computeH();
+});
+function endDrag() { if (dragIdx < 0) return; dragIdx = -1; store.set('corners', S.corners); buildSampler(); render(); }
+view.addEventListener('pointerup', endDrag);
+view.addEventListener('pointercancel', endDrag);
+
+// ---------- wiring ----------
+$('#btnCam').onclick = () => startCamera($('#camSel').value || null);
+$('#camSel').onchange = e => startCamera(e.target.value || null);
+$('#btnRotate').onclick = () => { S.rot = (S.rot + 1) % 4; store.set('rot', S.rot); buildSampler(); render(); };
+$('#btnClear').onclick = () => { S.corners = null; store.del('corners'); H = null; sampleSrc = null; ref = null; diffs = null; render(); };
+$('#chkHeat').checked = S.heat; $('#chkHeat').onchange = e => { S.heat = e.target.checked; store.set('heat', S.heat); };
+$('#rngThr').value = 53 - S.thr;
+$('#rngThr').oninput = e => { S.thr = 53 - Number(e.target.value); store.set('thr', S.thr); };
+$('#chkVoice').checked = S.voice; $('#chkVoice').onchange = e => { S.voice = e.target.checked; store.set('voice', S.voice); if (S.voice) speak('Voice on'); };
+$('#promo').value = S.promo; $('#promo').onchange = e => { S.promo = e.target.value; store.set('promo', S.promo); };
+$('#btnConnect').onclick = connect;
+$('#token').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+$('#btnLogout').onclick = logout;
+$('#btnAI').onclick = playAI;
+$('#btnSeek').onclick = seek;
+$('#btnPractice').onclick = startPractice;
+$('#btnSync').onclick = () => { resync(); setNote('Reading your board as it is now.', ''); };
+$('#btnLeave').onclick = leaveGame;
+$('#btnAbort').onclick = async () => { try { await api(`/api/board/game/${S.gameId}/abort`, { method: 'POST' }); } catch (e) { setNote(e.message, 'bad'); } };
+$('#btnDraw').onclick = async () => { try { await api(`/api/board/game/${S.gameId}/draw/yes`, { method: 'POST' }); setNote('Draw offered.', ''); } catch (e) { setNote(e.message, 'bad'); } };
+let resignArmed = 0;
+$('#btnResign').onclick = async () => {
+  const b = $('#btnResign');
+  if (Date.now() - resignArmed > 3000) { resignArmed = Date.now(); b.textContent = 'Tap again to resign'; setTimeout(() => { b.textContent = 'Resign'; }, 3000); return; }
+  resignArmed = 0; b.textContent = 'Resign';
+  try { await api(`/api/board/game/${S.gameId}/resign`, { method: 'POST' }); } catch (e) { setNote(e.message, 'bad'); }
+};
+$('#manualForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const txt = $('#manualMove').value.trim();
+  if (!txt || !S.phys) return;
+  const probe = new Chess(S.phys.fen());
+  const m = probe.move(txt, { sloppy: true });
+  if (!m) return setNote(`“${txt}” is not a legal move here.`, 'warn');
+  $('#manualMove').value = '';
+  commit(m, 'manual');
+});
+
+if (S.token) { $('#token').placeholder = 'Connecting…'; connect(); }
+render();
+</script>
+</body>
+</html>
