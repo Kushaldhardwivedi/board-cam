@@ -73,6 +73,9 @@ a { color: var(--accent); }
 .cam-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
 .cam-tools label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .cam-tools input[type=range] { width: 120px; accent-color: var(--accent); }
+.cam-tools .zoom { display: flex; align-items: center; gap: 6px; }
+.cam-tools .zoom button { min-width: 40px; font-weight: 700; }
+#zoomVal { min-width: 40px; text-align: center; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .diag { font: 12px/1.4 var(--font-mono); color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 
 .side { display: grid; gap: 14px; min-width: 0; }
@@ -153,6 +156,9 @@ details.card[open] > summary::after { content: '−'; }
     <div class="cam-tools">
       <button id="btnRotate" title="Turn the a1–h8 labels if they are on the wrong corners">Rotate labels</button>
       <button id="btnClear">Re-tap corners</button>
+      <span class="zoom" title="Pinch the picture with two fingers, or use − / +, so the whole board fits">
+        <button id="btnZoomOut" aria-label="Zoom out">−</button><span id="zoomVal" aria-live="polite">1×</span><button id="btnZoomIn" aria-label="Zoom in">+</button>
+      </span>
       <label title="Dots show where the app sees white and black pieces. Red squares changed since the last move."><input id="chkHeat" type="checkbox"> Show what it sees</label>
       <label>Sensitivity <input id="rngThr" type="range" min="8" max="45" step="1"></label>
     </div>
@@ -317,6 +323,7 @@ async function startCamera(deviceId) {
   try { await video.play(); } catch (e) {}
   if (!video.videoWidth) await new Promise(r => video.addEventListener('loadedmetadata', r, { once: true }));
   $('#camEmpty').hidden = true;
+  setupZoom();
   listCameras();
   requestWake();
   render();
@@ -336,6 +343,64 @@ async function requestWake() {
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && stream) requestWake(); });
+
+// ---------- zoom ----------
+// Pinch the picture or use − / + so the whole board fits at whatever height the stand allows.
+// Uses the camera's own zoom when the browser offers it (some phones go below 1×, i.e. the wide lens),
+// otherwise crops the middle of the frame (1×–4×). Saved per camera. Corners are scaled with the zoom
+// and re-snapped once the picture settles, so a game in progress carries on.
+const DZ_MAX = 4, ZOOM_STEP = 1.25;
+let zoom = 1, zoomHW = null, zoomSettle = 0;
+function zoomKey() {
+  const t = stream && stream.getVideoTracks()[0], id = t && t.getSettings ? t.getSettings().deviceId : '';
+  return 'zoom_' + (id || 'default');
+}
+function zoomRange() { return zoomHW ? [zoomHW.min, zoomHW.max] : [1, DZ_MAX]; }
+function setupZoom() {
+  const t = stream.getVideoTracks()[0];
+  let caps = {};
+  try { caps = t.getCapabilities ? t.getCapabilities() : {}; } catch (e) {}
+  zoomHW = caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null;
+  zoom = zoomHW ? (t.getSettings().zoom || 1) : 1;
+  const saved = store.get(zoomKey(), null);
+  if (saved) setZoom(saved, true); else updateZoomUI();
+}
+// initial = restoring the saved zoom: the saved corners already belong to it, so they are not scaled.
+function setZoom(z, initial) {
+  if (!stream) return;
+  const [lo, hi] = zoomRange();
+  z = Math.min(hi, Math.max(lo, z));
+  if (zoomHW && zoomHW.step) z = Math.min(hi, lo + Math.round((z - lo) / zoomHW.step) * zoomHW.step);
+  z = Math.round(z * 100) / 100;
+  const k = z / zoom;
+  if (Math.abs(k - 1) < 0.005) { updateZoomUI(); return; }
+  zoom = z; store.set(zoomKey(), z);
+  if (zoomHW) stream.getVideoTracks()[0].applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+  if (!initial && S.corners) {
+    S.corners = S.corners.map(([x, y]) => [0.5 + (x - 0.5) * k, 0.5 + (y - 0.5) * k]);
+    store.set('corners', S.corners);
+    if (S.corners.length === 4) { dragIdx = -1; H = computeH(); zoomSettle = 7; }
+  }
+  updateZoomUI();
+}
+function updateZoomUI() {
+  const [lo, hi] = zoomRange();
+  $('#zoomVal').textContent = (Math.round(zoom * 10) / 10) + '×';
+  $('#btnZoomOut').disabled = !stream || zoom <= lo + 0.005;
+  $('#btnZoomIn').disabled = !stream || zoom >= hi - 0.005;
+}
+// After a zoom the picture needs a moment (the camera may switch lens): then fit the grid again,
+// keeping the game and the learned board, like a nudged phone.
+function settleZoom() {
+  if (!S.corners || S.corners.length !== 4) return;
+  const img = pctx.getImageData(0, 0, proc.width, proc.height).data;
+  const out = S.corners.some(([x, y]) => x < 0 || x > 1 || y < 0 || y > 1);
+  const ii = edgeMaps(img), start = boardPts(), r = alignSearch(start, ii, 0.35 * squareSize(start));
+  baseline = r.score; lostStrikes = 0; S.lost = false;
+  applyRealign(r.pts, img);
+  if (out) setNote('Part of the board is outside the picture. Zoom out until all 64 squares are visible.', 'warn');
+  render();
+}
 
 // ---------- board geometry ----------
 function homography(src, dst) {
@@ -728,8 +793,15 @@ function ensureSize() {
 
 function tick() {
   if (!stream || video.readyState < 2 || !ensureSize()) return;
-  pctx.drawImage(video, 0, 0, proc.width, proc.height);
+  if (!zoomHW && zoom > 1) {
+    const sw = video.videoWidth / zoom, sh = video.videoHeight / zoom;
+    pctx.drawImage(video, (video.videoWidth - sw) / 2, (video.videoHeight - sh) / 2, sw, sh, 0, 0, proc.width, proc.height);
+  } else pctx.drawImage(video, 0, 0, proc.width, proc.height);
   vctx.drawImage(proc, 0, 0);
+  if (zoomSettle > 0) {
+    if (--zoomSettle > 0) { $('#diag').textContent = 'Zooming…'; drawOverlay(); return; }
+    settleZoom();
+  }
   if (needSnap && video.currentTime > 0.5) { needSnap = false; snapCorners(0.35, true); }
   if (sampleSrc) {
     const img = pctx.getImageData(0, 0, proc.width, proc.height).data;
@@ -1359,31 +1431,66 @@ function drawArrow(a, b, color) {
 // ---------- corner taps ----------
 let dragIdx = -1;
 function toNorm(e) { const r = view.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; }
+// Two fingers pinch to zoom. A corner is added when a single finger lifts without moving,
+// so starting a pinch never drops a stray corner.
+const fingers = new Map();
+let pinch = null, tap = null;
+const fingerDist = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
 view.addEventListener('pointerdown', e => {
   if (!stream) return;
+  view.setPointerCapture(e.pointerId);
+  fingers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (fingers.size >= 2) {
+    tap = null; endDrag();
+    if (fingers.size === 2) pinch = { d: Math.max(1, fingerDist()), z: zoom };
+    return;
+  }
   const p = toNorm(e), r = view.getBoundingClientRect();
   if (S.corners && S.corners.length === 4) {
     let best = -1, bd = 36;
     S.corners.forEach((c, i) => { const d = Math.hypot((c[0] - p[0]) * r.width, (c[1] - p[1]) * r.height); if (d < bd) { bd = d; best = i; } });
-    if (best >= 0) { dragIdx = best; view.setPointerCapture(e.pointerId); }
+    if (best >= 0) dragIdx = best;
     return;
   }
-  S.corners = (S.corners || []).concat([p]);
-  if (S.corners.length === 4) { S.corners = orderCorners(S.corners); store.set('corners', S.corners); snapCorners(0.35); }
-  render();
+  tap = { id: e.pointerId, x: e.clientX, y: e.clientY, p };
 });
 view.addEventListener('pointermove', e => {
+  if (!fingers.has(e.pointerId)) return;
+  fingers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pinch && fingers.size >= 2) { setZoom(pinch.z * fingerDist() / pinch.d); return; }
+  if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 12) tap = null;
   if (dragIdx < 0) return;
   S.corners[dragIdx] = toNorm(e).map(v => Math.min(1, Math.max(0, v)));
   H = computeH();
 });
 function endDrag() { if (dragIdx < 0) return; dragIdx = -1; store.set('corners', S.corners); snapCorners(0.15, true); render(); }
-view.addEventListener('pointerup', endDrag);
-view.addEventListener('pointercancel', endDrag);
+function fingerUp(e) {
+  fingers.delete(e.pointerId);
+  if (pinch) { if (!fingers.size) pinch = null; return; }
+  if (tap && tap.id === e.pointerId && e.type === 'pointerup') {
+    S.corners = (S.corners || []).concat([tap.p]);
+    if (S.corners.length === 4) { S.corners = orderCorners(S.corners); store.set('corners', S.corners); snapCorners(0.35); }
+    render();
+  }
+  tap = null;
+  endDrag();
+}
+view.addEventListener('pointerup', fingerUp);
+view.addEventListener('pointercancel', fingerUp);
+// Mouse wheel / trackpad zoom when testing on a computer.
+view.addEventListener('wheel', e => { if (!stream) return; e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }, { passive: false });
 
 // ---------- wiring ----------
 $('#btnCam').onclick = () => startCamera($('#camSel').value || null);
 $('#camSel').onchange = e => startCamera(e.target.value || null);
+$('#btnZoomIn').onclick = () => setZoom(zoom * ZOOM_STEP);
+$('#btnZoomOut').onclick = () => {
+  const lo = zoomRange()[0];
+  if (zoom <= lo + 0.005) return;
+  setZoom(zoom / ZOOM_STEP);
+  if (zoom <= lo + 0.005 && lo >= 1) setNote('This is as wide as this camera goes. If your phone has a wide (0.5×) lens, choose it under Camera in the settings below, or raise the phone a little.', 'warn');
+};
+updateZoomUI();
 $('#btnRotate').onclick = () => { S.rot = (S.rot + 1) % 4; store.set('rot', S.rot); buildSampler(); render(); };
 $('#btnClear').onclick = () => { S.corners = null; store.del('corners'); H = null; sampleSrc = null; ref = null; diffs = null; model = null; seen = null; baseline = 0; S.lost = false; render(); };
 $('#chkHeat').checked = S.heat; $('#chkHeat').onchange = e => { S.heat = e.target.checked; store.set('heat', S.heat); if (!S.heat) seen = null; };
