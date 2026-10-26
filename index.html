@@ -1237,6 +1237,7 @@ function onServerState(st, initial) {
       if (S.physUci[i] !== norm[i]) { S.desync = true; setNote('The game changed on Lichess. Set your board to match the digital board, then tap “My board matches”.', 'warn'); break; }
     }
   }
+  if (!initial && !S.desync && S.phys) takeOwnMovesFromLichess();
   if (!initial && norm.length > prevLen) {
     const hist = c.history({ verbose: true }), last = hist[hist.length - 1];
     if (last && last.color !== S.myColor) speak('Opponent: ' + sayMove(last.san));
@@ -1244,6 +1245,18 @@ function onServerState(st, initial) {
   S.over = !['created', 'started'].includes(S.status);
   if (S.over && !S.announcedEnd) { S.announcedEnd = true; speak(resultText()); $('#cardGame').open = true; }
   render();
+}
+// The player can enter their own move on lichess.org (e.g. on a laptop beside the board) when the
+// camera missed it and the phone is out of reach. Lichess is trusted: the board already shows the
+// move, so it is applied here and the board is re-read as the new reference.
+function takeOwnMovesFromLichess() {
+  if (S.outgoing && S.serverMoves[S.physUci.length - 1] === S.outgoing.u) { clearTimeout(S.outgoing.timer); S.outgoing = null; }
+  let pend, took = null;
+  while ((pend = pendingMove()) && pend.color === S.myColor) {
+    S.candidates = null; S.sel = null;
+    took = applyPhys({ from: pend.from, to: pend.to, promotion: pend.promotion }, 'lichess');
+  }
+  if (took) { setNote(`You played ${took.san} on Lichess. Make sure your board shows it.`, 'good'); speak(sayMove(took.san)); }
 }
 function resultText() {
   const st = S.status;
