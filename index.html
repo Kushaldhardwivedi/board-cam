@@ -260,7 +260,7 @@ details.card[open] > summary::after { content: '−'; }
         <div class="field">Camera <select id="camSel"><option value="">Back camera</option></select></div>
         <label class="row"><input id="chkVoice" type="checkbox"> Read moves aloud</label>
         <div class="field">Pause before sending my move to Lichess (time to cancel a wrong read)
-          <select id="delay"><option value="0">Send at once</option><option value="2">2 seconds</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
+          <select id="delay"><option value="0">Send at once</option><option value="1">1 second</option><option value="2">2 seconds</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
         </div>
         <p>Tips: keep the whole board in view with a little margin. A camera directly overhead reads moves most reliably. Set pieces near the middle of their squares.</p>
       </div>
@@ -292,7 +292,7 @@ const S = {
   token: store.get('token', ''), me: null,
   corners: store.get('corners', null), rot: store.get('rot', 0),
   thr: store.get('thr', 22), heat: store.get('heat', true), voice: store.get('voice', true), promo: store.get('promo', 'q'),
-  delay: store.get('delay', 2),
+  delay: store.get('delay', 1),
   mode: null,              // 'practice' | 'lichess'
   gameId: null, myColor: 'w', initialFen: null,
   serverMoves: [], server: null, status: null, winner: null, over: false,
@@ -822,7 +822,7 @@ function tick() {
       ref = avg.slice(); S.needRef = false; diffs = null;
       if (S.phys) train(features(avg), statesOf(S.phys), model ? 0.3 : 1);
       render();
-    } else if (ref && stable === STABLE_N) analyze();
+    } else if (ref && stable >= STABLE_N) analyzeWithRetry();
     const light = lightStatus();
     $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (light ? ' · ' + light : '') + (model ? '' : ' · not trained yet');
   } else {
@@ -878,7 +878,7 @@ function analyze() {
   const changed = d.filter(x => x > T).length;
   if (changed === 0) { ref.set(avg); return; } // absorb slow lighting changes
   if (!S.phys || S.over || S.desync || S.outgoing || S.inFlight || S.lost) return;
-  if (changed > 14) return setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn');
+  if (changed > 14) { setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn'); return 'miss'; }
   const pend = pendingMove();
   if (!canEnterMove()) return setNote('It is your opponent’s turn. Leave the board as it is.', 'warn');
   const probs = model ? classProbs(features(normalized(avg))) : null;
@@ -891,12 +891,42 @@ function analyze() {
   if (pend) {
     const pc = cands.find(c => uciOf(c.m) === uciOf(pend));
     if (pc && pc.score >= cands[0].score - 1.5 && pc.score > none + 2) return commit(pend, 'camera');
-    return setNote(`That does not look like ${pend.san}. Play the opponent’s move exactly as shown, or tap it on the small board.`, 'warn');
+    setNote(`That does not look like ${pend.san}. Play the opponent’s move exactly as shown, or tap it on the small board.`, 'warn');
+    return 'miss';
   }
   const [best, second] = cands;
-  if (!best || best.score < none + 2) return setNote('Could not read a move. Tap it on the small board: the piece, then its square.', 'warn');
+  if (!best || best.score < none + 2) { setNote('Could not read a move. Tap it on the small board: the piece, then its square.', 'warn'); return 'miss'; }
   if (!second || best.score - second.score >= 3) commit(best.m, 'camera');
-  else { S.candidates = cands.filter(c => c.score > best.score - 4).slice(0, 3).map(c => c.m); setNote('', ''); render(); }
+  else { S.candidates = cands.filter(c => c.score > best.score - 4).slice(0, 3).map(c => c.m); setNote('', ''); render(); alertUser('Which move?'); }
+}
+// A failed read is retried while the board stays still (the camera's auto exposure often
+// settles after the hand leaves, which matters most in dim light). After the last retry the
+// player gets a beep and a spoken hint, since their clock is running. No vibration: it would
+// shake the phone and move the grid.
+const RETRY_EVERY = 4, RETRY_MAX = 10;
+let retryAt = 0, retries = 0;
+function analyzeWithRetry() {
+  if (stable === STABLE_N) { retries = 0; retryAt = 0; }
+  else if (!retryAt || stable !== retryAt) return;
+  if (analyze() !== 'miss') { retryAt = 0; return; }
+  if (++retries <= RETRY_MAX) { retryAt = stable + RETRY_EVERY; return; }
+  retryAt = 0;
+  if (canEnterMove() && !pendingMove()) alertUser('Move not read. Tap it on the small board.');
+}
+let audioCtx = null;
+// Browsers only allow sound after a tap, so unlock audio on the first one.
+document.addEventListener('pointerdown', () => {
+  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
+}, { once: true });
+function alertUser(text) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; g.gain.value = 0.15;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.15);
+  } catch (e) {}
+  speak(text);
 }
 
 // ---------- committing, undo, sending ----------
