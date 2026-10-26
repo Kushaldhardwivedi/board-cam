@@ -133,7 +133,7 @@ details.card[open] > summary::after { content: '−'; }
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Board Cam</div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Board Cam <span class="pill">v2 test</span></div>
   <span id="conn" class="pill">Lichess: not connected</span>
 </header>
 
@@ -540,16 +540,104 @@ function meanDiff(a, b) {
   let sum = 0; for (let i = 0; i < a.length; i += 6) sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
   return sum / (a.length / 6 * 3);
 }
-function squareDiffs(a, b) {
+// ---------- lighting-aware comparison ----------
+// Light from one side, the player's own shadow and exposure jumps change how bright squares look
+// although nothing moved. Before a square is compared with the reference, the lighting change is
+// taken out in two steps:
+//  1. per-channel gain from the 5×5 squares around it (median, so moved pieces don't count):
+//     follows exposure, white balance and large shadows;
+//  2. one clamped gain for the square itself, measured on its outer ring where pieces don't
+//     stand: a shadow edge crossing near that square.
+// What is left is a change of pattern: a piece arriving, leaving or being swapped. Changed edges
+// add to it (shadows have soft edges, pieces sharp ones). Near-white glare pixels are skipped.
+const GLARE = 250, EDGE_W = 0.5, A_MIN = 0.6, A_MAX = 1.6;
+const gainC = new Float32Array(64 * 3).fill(1), glareMask = new Uint8Array(64 * P);
+const lumN = new Float32Array(P), lumR = new Float32Array(P), RING = 3;
+const ringIdx = []; for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) if (Math.min(i, j, G - 1 - i, G - 1 - j) < RING) ringIdx.push(j * G + i);
+const ringRatio = new Float32Array(ringIdx.length);
+let normBuf = null, glareSquares = 0, boardLum = 0;
+const lumOf = (x, q) => 0.299 * x[q] + 0.587 * x[q + 1] + 0.114 * x[q + 2];
+function lightDiffs(a, b) {
+  const ratio = [new Float32Array(64), new Float32Array(64), new Float32Array(64)];
+  let lumSum = 0; glareSquares = 0;
+  for (let s = 0; s < 64; s++) {
+    const o = s * P, sa = [0, 0, 0], sb = [0, 0, 0], ta = [0, 0, 0], tb = [0, 0, 0];
+    let n = 0;
+    for (let k = 0; k < P; k++) {
+      const q = (o + k) * 3;
+      lumSum += lumOf(a, q);
+      const bad = Math.max(a[q], a[q + 1], a[q + 2]) >= GLARE || Math.max(b[q], b[q + 1], b[q + 2]) >= GLARE;
+      glareMask[o + k] = bad ? 1 : 0;
+      for (let c = 0; c < 3; c++) { ta[c] += a[q + c]; tb[c] += b[q + c]; if (!bad) { sa[c] += a[q + c]; sb[c] += b[q + c]; } }
+      if (!bad) n++;
+    }
+    if (n < P * 0.9) glareSquares++;
+    const useAll = n < P * 0.3; // mostly glare: better to use everything than almost nothing
+    if (useAll) glareMask.fill(0, o, o + P);
+    for (let c = 0; c < 3; c++) ratio[c][s] = ((useAll ? ta[c] : sa[c]) + P) / ((useAll ? tb[c] : sb[c]) + P);
+  }
+  boardLum = lumSum / (64 * P);
+  const nb = [];
+  for (let s = 0; s < 64; s++) {
+    const f = s % 8, r = s >> 3;
+    for (let c = 0; c < 3; c++) {
+      nb.length = 0;
+      for (let dr = -2; dr <= 2; dr++) for (let df = -2; df <= 2; df++) {
+        const rr = r + dr, ff = f + df;
+        if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) nb.push(ratio[c][rr * 8 + ff]);
+      }
+      nb.sort((x, y) => x - y);
+      gainC[s * 3 + c] = nb[nb.length >> 1];
+    }
+  }
   const d = new Float32Array(64);
   for (let s = 0; s < 64; s++) {
-    let sum = 0; const o0 = s * P * 3, o1 = o0 + P * 3;
-    for (let i = o0; i < o1; i++) sum += Math.abs(a[i] - b[i]);
-    d[s] = sum / (P * 3);
+    const o = s * P, g0 = gainC[s * 3], g1 = gainC[s * 3 + 1], g2 = gainC[s * 3 + 2];
+    const g = 0.299 * g0 + 0.587 * g1 + 0.114 * g2;
+    let nr = 0;
+    for (const k of ringIdx) {
+      if (glareMask[o + k]) continue;
+      const q = (o + k) * 3;
+      ringRatio[nr++] = (lumOf(a, q) + 4) / (g * lumOf(b, q) + 4);
+    }
+    const ring = ringRatio.subarray(0, nr).sort();
+    const as = nr > 20 ? Math.min(A_MAX, Math.max(A_MIN, ring[nr >> 1])) : 1;
+    const gl = g * as;
+    let res = 0, cnt = 0;
+    for (let k = 0; k < P; k++) {
+      if (glareMask[o + k]) continue;
+      const q = (o + k) * 3;
+      res += Math.abs(a[q] - as * g0 * b[q]) + Math.abs(a[q + 1] - as * g1 * b[q + 1]) + Math.abs(a[q + 2] - as * g2 * b[q + 2]);
+      cnt += 3;
+      lumN[k] = lumOf(a, q) / gl; lumR[k] = lumOf(b, q);
+    }
+    let e = 0, ec = 0;
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const k = j * G + i;
+      if (glareMask[o + k]) continue;
+      if (i < G - 1 && !glareMask[o + k + 1]) { e += Math.abs((lumN[k + 1] - lumN[k]) - (lumR[k + 1] - lumR[k])); ec++; }
+      if (j < G - 1 && !glareMask[o + k + G]) { e += Math.abs((lumN[k + G] - lumN[k]) - (lumR[k + G] - lumR[k])); ec++; }
+    }
+    // residual in reference-light units, so a shadowed square is as sensitive as a lit one
+    d[s] = (cnt ? res / cnt / gl : 0) + EDGE_W * (ec ? e / ec : 0);
   }
   const med = Array.from(d).sort((x, y) => x - y)[32];
   for (let s = 0; s < 64; s++) d[s] = Math.max(0, d[s] - med);
   return d;
+}
+// The frame with the lighting change (step 1) taken out, so the piece classifier sees the light it learned in.
+function normalized(buf) {
+  if (!normBuf || normBuf.length !== buf.length) normBuf = new Float32Array(buf.length);
+  for (let s = 0; s < 64; s++) {
+    const g0 = gainC[s * 3], g1 = gainC[s * 3 + 1], g2 = gainC[s * 3 + 2];
+    for (let k = s * P * 3, end = k + P * 3; k < end; k += 3) { normBuf[k] = buf[k] / g0; normBuf[k + 1] = buf[k + 1] / g1; normBuf[k + 2] = buf[k + 2] / g2; }
+  }
+  return normBuf;
+}
+function lightStatus() {
+  if (boardLum && boardLum < 45) return 'light: dim';
+  if (glareSquares > 3) return `light: glare on ${glareSquares} squares`;
+  return boardLum ? 'light: ok' : '';
 }
 
 // Per-square features: mean colour, brightness spread, edge strength. Pieces add edges and contrast.
@@ -653,9 +741,9 @@ function tick() {
       stable++; noise = noise * 0.95 + motion * 0.05;
       if (stable === 1) avg.set(cur); else for (let i = 0; i < avg.length; i++) avg[i] += (cur[i] - avg[i]) * 0.3;
     } else { stable = 0; avg.set(cur); }
-    diffs = ref ? squareDiffs(avg, ref) : null;
+    if (ref) diffs = lightDiffs(avg, ref); else { diffs = null; gainC.fill(1); }
     changedCount = diffs ? diffs.filter(x => x > S.thr).length : 0;
-    if (S.heat && model && ++seenTick % 3 === 0) seen = classProbs(features(avg));
+    if (S.heat && model && ++seenTick % 3 === 0) seen = classProbs(features(normalized(avg)));
     if (stable >= STABLE_N && dragIdx < 0 && (++trackTick % 9 === 0 || (stable === STABLE_N && changedCount > 14))) track(img);
     if (S.lost) { /* wait for the board to be found again */ }
     else if (S.needRef && stable >= STABLE_N) {
@@ -663,7 +751,8 @@ function tick() {
       if (S.phys) train(features(avg), statesOf(S.phys), model ? 0.3 : 1);
       render();
     } else if (ref && stable === STABLE_N) analyze();
-    $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (model ? '' : ' · not trained yet');
+    const light = lightStatus();
+    $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (light ? ' · ' + light : '') + (model ? '' : ' · not trained yet');
   } else {
     $('#diag').textContent = 'Tap the 4 corners of the playing area';
   }
@@ -720,7 +809,7 @@ function analyze() {
   if (changed > 14) return setNote('Many squares look different. Move your hand away, or tap “My board matches” once the board is right.', 'warn');
   const pend = pendingMove();
   if (!canEnterMove()) return setNote('It is your opponent’s turn. Leave the board as it is.', 'warn');
-  const probs = model ? classProbs(features(avg)) : null;
+  const probs = model ? classProbs(features(normalized(avg))) : null;
   const before = statesOf(S.phys);
   const none = scoreStates(before, new Set(), probs, d, T);
   const cands = S.phys.moves({ verbose: true })
