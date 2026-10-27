@@ -824,7 +824,8 @@ function tick() {
       render();
     } else if (ref && stable >= STABLE_N) analyzeWithRetry();
     const light = lightStatus();
-    $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (light ? ' · ' + light : '') + (model ? '' : ' · not trained yet');
+    $('#diag').textContent = `motion ${motion.toFixed(1)} · ${stable >= STABLE_N ? 'still' : 'moving'} · squares changed ${changedCount}` + (light ? ' · ' + light : '') + (model ? '' : ' · not trained yet')
+      + (S.mode === 'lichess' ? ` · send ${S.sendMs == null ? '–' : S.sendMs + ' ms'}` + (S.reconnects ? ` · reconnected ${S.reconnects}×` : '') : '');
   } else {
     $('#diag').textContent = 'Tap the 4 corners of the playing area';
   }
@@ -951,8 +952,9 @@ function commit(m, source) {
   if (S.mode === 'lichess') {
     if (pend) {
       if (uciOf(pend) !== u) return setNote(`First play the opponent’s move ${pend.san} on your board.`, 'warn');
-      applyPhys(mv, source);
+      const done = applyPhys(mv, source);
       setNote('Board in sync. Your move.', 'good');
+      speak('OK, ' + sayMove(done.san)); // tells a player who can't see the screen that the copy was seen
     } else if (canEnterMove()) {
       const done = applyPhys(mv, source);
       queueSend(uciOf(done), done.san, source);
@@ -975,7 +977,7 @@ function undo() {
   render();
 }
 function queueSend(u, san, source) {
-  if (!S.delay) return sendMove(u, san, source);
+  if (!S.delay) { speak(sayMove(san)); return sendMove(u, san, source); }
   const o = { u, san, source };
   o.timer = setTimeout(() => { if (S.outgoing === o) { S.outgoing = null; sendMove(u, san, source); } }, S.delay * 1000);
   S.outgoing = o;
@@ -993,16 +995,48 @@ function sendNow() {
   clearTimeout(o.timer); S.outgoing = null;
   sendMove(o.u, o.san, o.source);
 }
+// A send can hang or fail on a weak connection even though Lichess got the move. So each try
+// has a time limit, and after a failure we ask Lichess for the game's moves before retrying,
+// so the move is never sent twice and a move Lichess has is never taken back.
+const SEND_TIMEOUT_MS = 6000, SEND_TRIES = 3;
+async function lichessHasMove(idx, u) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
+  let moves = null;
+  try {
+    await streamNdjson('/api/board/game/stream/' + S.gameId, d => { if (d.type === 'gameFull') { moves = d.state.moves; ctl.abort(); } }, ctl.signal);
+  } catch (e) {} finally { clearTimeout(t); }
+  if (moves == null) return null; // don't know
+  return replayMoves(moves).norm[idx] === u;
+}
 async function sendMove(u, san, source) {
   S.inFlight = true;
   setNote('Sending ' + san + '…', '');
   render();
+  const idx = S.physUci.length - 1, t0 = performance.now();
   try {
-    await api(`/api/board/game/${S.gameId}/move/${u}`, { method: 'POST' });
+    for (let tryNo = 1; ; tryNo++) {
+      try {
+        await api(`/api/board/game/${S.gameId}/move/${u}`, { method: 'POST', timeout: SEND_TIMEOUT_MS });
+        break;
+      } catch (e) {
+        const has = S.serverMoves[idx] === u || await lichessHasMove(idx, u);
+        if (has === true) break;
+        if (!e.network && has === false) throw e; // Lichess really refused the move
+        if (tryNo >= SEND_TRIES) throw e;
+        setNote(`Lichess is slow. Trying again to send ${san}…`, 'warn');
+        if (tryNo === 1) speak('Lichess is slow');
+      }
+    }
+    S.sendMs = Math.round(performance.now() - t0);
     setNote('Played ' + san, 'good');
   } catch (e) {
     if (S.physUci[S.physUci.length - 1] === u) popPhys();
-    setNote(`Lichess did not accept ${san}. Put the piece back. (${e.message})`, 'bad');
+    if (e.network) {
+      // The board still shows the move, so the next read sends it again. If Lichess did get it
+      // after all, takeOwnMovesFromLichess() puts it back when the stream catches up.
+      setNote(`Could not send ${san}: no connection to Lichess. Leave the piece there and pass your hand over the board to send it again. (${e.message})`, 'bad');
+      speak('Move not sent. Connection problem.');
+    } else setNote(`Lichess did not accept ${san}. Put the piece back. (${e.message})`, 'bad');
   } finally { S.inFlight = false; render(); }
 }
 async function requestTakeback() {
@@ -1049,24 +1083,35 @@ async function errText(res) {
   try { t = await res.text(); const j = JSON.parse(t); t = j.error || j.message || t; if (typeof t === 'object') t = JSON.stringify(t); } catch (e) {}
   return `Lichess error ${res.status}${t ? ': ' + t : ''}`;
 }
+// A network error (`network: true`) means we don't know if Lichess got the request; any other
+// error is Lichess's own answer.
+function netError(msg) { const e = new Error(msg); e.network = true; return e; }
 // fetch() only throws a bare "Failed to fetch" when the request never reached Lichess.
 async function lichessFetch(path, init) {
   try { return await fetch(LICHESS + path, init); }
   catch (e) {
     if (e.name === 'AbortError') throw e;
-    throw new Error('Could not reach lichess.org. Check the phone’s internet, and turn off ad blockers, VPN or Private DNS for this site. Then try again.');
+    throw netError('Could not reach lichess.org. Check the phone’s internet, and turn off ad blockers, VPN or Private DNS for this site. Then try again.');
   }
 }
 async function api(path, opts = {}) {
-  const res = await lichessFetch(path, {
-    method: opts.method || 'GET',
-    headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/json' },
-    body: opts.form ? new URLSearchParams(opts.form) : undefined,
-    signal: opts.signal,
-  });
-  if (!res.ok) throw new Error(await errText(res));
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('json') ? res.json() : res.text();
+  // opts.timeout: give up after this many ms (a weak phone connection can otherwise hang for minutes).
+  let signal = opts.signal, timer = null, timedOut = false;
+  if (opts.timeout) { const c = new AbortController(); signal = c.signal; timer = setTimeout(() => { timedOut = true; c.abort(); }, opts.timeout); }
+  try {
+    const res = await lichessFetch(path, {
+      method: opts.method || 'GET',
+      headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/json' },
+      body: opts.form ? new URLSearchParams(opts.form) : undefined,
+      signal,
+    });
+    if (!res.ok) throw new Error(await errText(res));
+    const ct = res.headers.get('content-type') || '';
+    return await (ct.includes('json') ? res.json() : res.text());
+  } catch (e) {
+    if (timedOut) throw netError('Lichess did not answer in time.');
+    throw e;
+  } finally { clearTimeout(timer); }
 }
 async function streamNdjson(path, onLine, signal, opts = {}) {
   const res = await lichessFetch(path, {
@@ -1081,6 +1126,7 @@ async function streamNdjson(path, onLine, signal, opts = {}) {
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
+    if (opts.onData) opts.onData(); // also fires for Lichess's empty keep-alive lines
     buf += dec.decode(value, { stream: true });
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
@@ -1177,7 +1223,8 @@ async function seek() {
 function resetGameState() {
   if (S.outgoing) clearTimeout(S.outgoing.timer);
   Object.assign(S, { serverMoves: [], server: null, over: false, status: 'started', winner: null, phys: null, physUci: [], refStack: [],
-    desync: false, candidates: null, sel: null, outgoing: null, inFlight: false, announcedEnd: false });
+    desync: false, candidates: null, sel: null, outgoing: null, inFlight: false, announcedEnd: false,
+    joined: false, reconnects: 0, sendMs: null });
   ref = null; model = null; seen = null;
 }
 function openGame(id) {
@@ -1189,9 +1236,39 @@ function openGame(id) {
   S.mode = 'lichess'; S.gameId = id;
   setNote('Joining game…', '');
   $('#cardGame').open = false;
-  streamNdjson('/api/board/game/stream/' + id, d => onGameLine(d, id), ctl.signal)
-    .catch(e => { if (!ctl.signal.aborted) setNote('Lost the game connection. ' + e.message + ' Reload the page to reconnect.', 'bad'); });
+  runGameStream(id, ctl);
   render();
+}
+// The game stream can go silent on a weak phone connection without any error (moves show on
+// lichess.org but not here). Lichess sends keep-alive lines, so a long silence means the
+// connection is dead: drop it and reconnect. The gameFull sent on reconnect catches up any moves.
+const STREAM_SILENT_MS = 20000;
+async function runGameStream(id, ctl) {
+  let delay = 1000, fails = 0;
+  while (!ctl.signal.aborted && !S.over) {
+    const conn = new AbortController(), stop = () => conn.abort();
+    ctl.signal.addEventListener('abort', stop);
+    let last = Date.now(), gotData = false, limited = false;
+    const dog = setInterval(() => { if (Date.now() - last > STREAM_SILENT_MS) conn.abort(); }, 2000);
+    try {
+      await streamNdjson('/api/board/game/stream/' + id, d => onGameLine(d, id), conn.signal, {
+        onData: () => {
+          last = Date.now();
+          if (!gotData && fails >= 2) setNote('Reconnected to Lichess.', 'good');
+          gotData = true; fails = 0; delay = 1000;
+        },
+      });
+    } catch (e) {
+      if (ctl.signal.aborted) return;
+      limited = /\b429\b/.test(e.message);
+      console.warn(e);
+    } finally { clearInterval(dog); ctl.signal.removeEventListener('abort', stop); }
+    if (ctl.signal.aborted || S.over) return;
+    S.reconnects++;
+    if (!gotData && ++fails >= 2) setNote('Connection to Lichess lost. Reconnecting…', 'warn');
+    await sleep(limited ? 60000 : delay);
+    delay = Math.min(delay * 2, 10000);
+  }
 }
 function playerName(p) {
   if (!p) return '?';
@@ -1200,7 +1277,10 @@ function playerName(p) {
 }
 function onGameLine(d, id) {
   if (id !== S.gameId) return;
-  if (d.type === 'gameFull') {
+  if (d.type === 'gameFull' && S.joined) {
+    onServerState(d.state, false); // reconnected: just catch up
+  } else if (d.type === 'gameFull') {
+    S.joined = true;
     S.myColor = (S.me && d.black && d.black.id === S.me.id) ? 'b' : 'w';
     S.names = { w: playerName(d.white), b: playerName(d.black) };
     S.initialFen = d.initialFen && d.initialFen !== 'startpos' ? d.initialFen : null;
@@ -1225,10 +1305,15 @@ function moveFromUci(c, u) {
   }
   return c.move({ from, to, promotion: u[4] });
 }
-function onServerState(st, initial) {
-  const raw = (st.moves || '').trim() ? st.moves.trim().split(/\s+/) : [];
+// Lichess's move list, replayed so castling etc. use the same UCI as our own moves.
+function replayMoves(moves) {
+  const raw = (moves || '').trim() ? moves.trim().split(/\s+/) : [];
   const c = newChess(), norm = [];
   for (const u of raw) { const m = moveFromUci(c, u); if (!m) break; norm.push(uciOf(m)); }
+  return { c, norm };
+}
+function onServerState(st, initial) {
+  const { c, norm } = replayMoves(st.moves);
   const prevLen = S.serverMoves.length;
   S.serverMoves = norm; S.server = c;
   S.wtime = st.wtime; S.btime = st.btime; S.clockAt = performance.now();
