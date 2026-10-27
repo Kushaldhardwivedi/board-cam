@@ -1049,8 +1049,16 @@ async function errText(res) {
   try { t = await res.text(); const j = JSON.parse(t); t = j.error || j.message || t; if (typeof t === 'object') t = JSON.stringify(t); } catch (e) {}
   return `Lichess error ${res.status}${t ? ': ' + t : ''}`;
 }
+// fetch() only throws a bare "Failed to fetch" when the request never reached Lichess.
+async function lichessFetch(path, init) {
+  try { return await fetch(LICHESS + path, init); }
+  catch (e) {
+    if (e.name === 'AbortError') throw e;
+    throw new Error('Could not reach lichess.org. Check the phone’s internet, and turn off ad blockers, VPN or Private DNS for this site. Then try again.');
+  }
+}
 async function api(path, opts = {}) {
-  const res = await fetch(LICHESS + path, {
+  const res = await lichessFetch(path, {
     method: opts.method || 'GET',
     headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/json' },
     body: opts.form ? new URLSearchParams(opts.form) : undefined,
@@ -1061,7 +1069,7 @@ async function api(path, opts = {}) {
   return ct.includes('json') ? res.json() : res.text();
 }
 async function streamNdjson(path, onLine, signal, opts = {}) {
-  const res = await fetch(LICHESS + path, {
+  const res = await lichessFetch(path, {
     method: opts.method || 'GET',
     headers: { Authorization: 'Bearer ' + S.token, Accept: 'application/x-ndjson' },
     body: opts.form ? new URLSearchParams(opts.form) : undefined,
